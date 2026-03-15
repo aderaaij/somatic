@@ -6,13 +6,31 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B273F6482F64958100D86611 /* OpenWearablesHealthSDK in Frameworks */ = {isa = PBXBuildFile; productRef = B273F6472F64958100D86611 /* OpenWearablesHealthSDK */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		B273F6372F64920300D86611 /* OpenHealthSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenHealthSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B273F6612F66F56C00D86611 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B273F64A2F64986200D86611 /* Exceptions for "OpenHealthSync" folder in "OpenHealthSync" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B273F6362F64920300D86611 /* OpenHealthSync */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B273F6392F64920300D86611 /* OpenHealthSync */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B273F64A2F64986200D86611 /* Exceptions for "OpenHealthSync" folder in "OpenHealthSync" target */,
+			);
 			path = OpenHealthSync;
 			sourceTree = "<group>";
 		};
@@ -23,6 +41,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B273F6482F64958100D86611 /* OpenWearablesHealthSDK in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -32,6 +51,7 @@
 		B273F62E2F64920300D86611 = {
 			isa = PBXGroup;
 			children = (
+				B273F6612F66F56C00D86611 /* Secrets.xcconfig */,
 				B273F6392F64920300D86611 /* OpenHealthSync */,
 				B273F6382F64920300D86611 /* Products */,
 			);
@@ -65,6 +85,7 @@
 			);
 			name = OpenHealthSync;
 			packageProductDependencies = (
+				B273F6472F64958100D86611 /* OpenWearablesHealthSDK */,
 			);
 			productName = OpenHealthSync;
 			productReference = B273F6372F64920300D86611 /* OpenHealthSync.app */;
@@ -94,6 +115,9 @@
 			);
 			mainGroup = B273F62E2F64920300D86611;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B273F6462F64958100D86611 /* XCRemoteSwiftPackageReference "open_wearables_ios_sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B273F6382F64920300D86611 /* Products */;
 			projectDirPath = "";
@@ -248,14 +272,18 @@
 		};
 		B273F6432F64920500D86611 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = B273F6612F66F56C00D86611 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OpenHealthSync/OpenHealthSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NS76532L76;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = OpenHealthSync/Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "is app syncs your health data to your personal Open Wearables server.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -280,14 +308,18 @@
 		};
 		B273F6442F64920500D86611 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = B273F6612F66F56C00D86611 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OpenHealthSync/OpenHealthSync.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NS76532L76;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = OpenHealthSync/Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "is app syncs your health data to your personal Open Wearables server.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -332,6 +364,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B273F6462F64958100D86611 /* XCRemoteSwiftPackageReference "open_wearables_ios_sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/the-momentum/open_wearables_ios_sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.7.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B273F6472F64958100D86611 /* OpenWearablesHealthSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B273F6462F64958100D86611 /* XCRemoteSwiftPackageReference "open_wearables_ios_sdk" */;
+			productName = OpenWearablesHealthSDK;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B273F62F2F64920300D86611 /* Project object */;
 }

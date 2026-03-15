@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Somatic</string>
+    <key>NSHealthShareUsageDescription</key>
+    <string>This app syncs your health data to your personal Open Wearables server.</string>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+        <string>processing</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.openwearables.healthsdk.task.refresh</string>
+        <string>com.openwearables.healthsdk.task.process</string>
+    </array>
+    <key>WorkoutAPIBaseURL</key>
+    <string>$(WORKOUT_API_BASE_URL)</string>
+    <key>WorkoutAPIKey</key>
+    <string>$(WORKOUT_API_KEY)</string>
+</dict>
+</plist>

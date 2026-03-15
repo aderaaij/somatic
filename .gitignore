@@ -1,0 +1,26 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+xcuserdata/
+
+# Generated files
+*.dSYM
+*.dSYM.zip
+*.ipa
+*.xcarchive
+
+# CocoaPods / SPM
+Pods/
+.build/
+
+# OS files
+.DS_Store
+*.swp
+*~
+
+# Secrets — never commit
+Secrets.xcconfig
