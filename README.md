@@ -66,7 +66,7 @@ The Training API stores workout data uploaded from the app and serves planned wo
 Quick start with Docker Compose:
 
 ```bash
-git clone https://github.com/your-username/training-api.git
+git clone https://github.com/aderaaij/training-api.git
 cd training-api
 cp .env.example .env  # Edit with your DATABASE_URL and API_KEY
 docker compose up -d
@@ -113,7 +113,7 @@ The `/api/workouts/queue` endpoint returns an array of workout compositions that
 }
 ```
 
-See the [Training API repository](https://github.com/your-username/training-api) for full schema documentation including goal types, alert types, and supported activity types.
+See the [Training API repository](https://github.com/aderaaij/training-api) for full schema documentation including goal types, alert types, and supported activity types.
 
 ### Optional: MCP Integration
 
@@ -124,7 +124,7 @@ Both servers can be paired with [MCP](https://modelcontextprotocol.io/) gateways
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/OpenHealthSync.git
+git clone https://github.com/aderaaij/OpenHealthSync.git
 cd OpenHealthSync
 ```
 
