@@ -1,9 +1,8 @@
 import SwiftUI
 
-struct ContentView: View {
+struct SyncTabView: View {
     @ObservedObject var health: HealthManager
     @ObservedObject var workoutManager: WorkoutManager
-    @ObservedObject var scheduleManager: WorkoutScheduleManager
 
     @AppStorage("serverURL") private var serverURL: String = ""
     @AppStorage("userId") private var userId: String = ""
@@ -12,41 +11,39 @@ struct ContentView: View {
     @State private var showingLogs = false
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    statusCard
-                    syncProgressSection
-                    workoutsLink
-                    scheduledWorkoutsLink
-                    tierToggles
-                    syncButton
-                }
-                .padding()
+        ScrollView {
+            VStack(spacing: 16) {
+                statusCard
+                lastSyncInfo
+                syncProgressSection
+                workoutTimelineLink
+                tierToggles
+                syncButton
             }
-            .navigationTitle("Somatic")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 12) {
-                        Button {
-                            showingLogs = true
-                        } label: {
-                            Image(systemName: "list.bullet.rectangle")
-                        }
-                        Button {
-                            showingSettings = true
-                        } label: {
-                            Image(systemName: "gearshape")
-                        }
+            .padding()
+        }
+        .navigationTitle("Somatic")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 12) {
+                    Button {
+                        showingLogs = true
+                    } label: {
+                        Image(systemName: "list.bullet.rectangle")
+                    }
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
                     }
                 }
             }
-            .sheet(isPresented: $showingSettings) {
-                settingsSheet
-            }
-            .sheet(isPresented: $showingLogs) {
-                logsSheet
-            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            settingsSheet
+        }
+        .sheet(isPresented: $showingLogs) {
+            logsSheet
         }
     }
 
@@ -79,6 +76,28 @@ struct ContentView: View {
         case _ where health.status.contains("expired"): .orange
         case "Not connected": .gray
         default: .yellow
+        }
+    }
+
+    // MARK: - Last Sync Info
+
+    @ViewBuilder
+    private var lastSyncInfo: some View {
+        if let lastDate = health.lastSyncDate {
+            HStack {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(.secondary)
+                Text("Last synced")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(lastDate, style: .relative) ago")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color.secondary.opacity(0.05))
+            .cornerRadius(12)
         }
     }
 
@@ -181,9 +200,9 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Workouts Link
+    // MARK: - Workout Timeline Link
 
-    private var workoutsLink: some View {
+    private var workoutTimelineLink: some View {
         NavigationLink {
             WorkoutListView(workoutManager: workoutManager)
         } label: {
@@ -194,37 +213,8 @@ struct ContentView: View {
                 Text("Workouts")
                     .font(.subheadline)
                 Spacer()
-                if !workoutManager.workouts.isEmpty {
+                if workoutManager.workouts.count > 0 {
                     Text("\(workoutManager.workouts.count)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding()
-            .background(Color.secondary.opacity(0.05))
-            .cornerRadius(12)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Scheduled Workouts Link
-
-    private var scheduledWorkoutsLink: some View {
-        NavigationLink {
-            ScheduledWorkoutsView(scheduleManager: scheduleManager)
-        } label: {
-            HStack {
-                Image(systemName: "calendar.badge.clock")
-                    .foregroundStyle(.orange)
-                    .frame(width: 28)
-                Text("Workout Plans")
-                    .font(.subheadline)
-                Spacer()
-                if !scheduleManager.scheduledWorkouts.isEmpty {
-                    Text("\(scheduleManager.scheduledWorkouts.count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -284,10 +274,18 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
             } else {
-                Button("Sync Now") {
-                    health.syncNow()
+                VStack(spacing: 4) {
+                    Button("Sync Now") {
+                        health.syncNow()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    if health.lastSyncDate == nil {
+                        Text("First sync may take a few minutes")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.bordered)
             }
         }
     }
@@ -347,9 +345,10 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(
-        health: HealthManager(),
-        workoutManager: WorkoutManager(),
-        scheduleManager: WorkoutScheduleManager(apiClient: WorkoutAPIClient())
-    )
+    NavigationStack {
+        SyncTabView(
+            health: HealthManager(),
+            workoutManager: WorkoutManager()
+        )
+    }
 }

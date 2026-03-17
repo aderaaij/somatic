@@ -10,17 +10,109 @@ import SwiftUI
 import WorkoutKit
 import HealthKit
 
-struct ScheduledWorkoutsView: View {
+struct TrainingTabView: View {
     @ObservedObject var scheduleManager: WorkoutScheduleManager
+    @ObservedObject var workoutManager: WorkoutManager
     @State private var showRemoveAllConfirmation = false
+    @State private var viewMode: ViewMode = .timeline
+    @State private var selectedDate: Date?
+
+    enum ViewMode: String, CaseIterable {
+        case timeline, list
+    }
+
+    private var upcomingWorkouts: [ScheduledWorkoutPlan] {
+        scheduleManager.scheduledWorkouts
+            .filter { !$0.complete }
+            .sorted {
+                let date0 = Calendar.current.date(from: $0.date) ?? .distantFuture
+                let date1 = Calendar.current.date(from: $1.date) ?? .distantFuture
+                return date0 < date1
+            }
+    }
+
+    private var completedWorkouts: [ScheduledWorkoutPlan] {
+        scheduleManager.scheduledWorkouts
+            .filter { $0.complete }
+            .sorted {
+                let date0 = Calendar.current.date(from: $0.date) ?? .distantPast
+                let date1 = Calendar.current.date(from: $1.date) ?? .distantPast
+                return date0 > date1
+            }
+    }
+
+    private var pastWorkouts: [WorkoutSummary] {
+        workoutManager.allWorkouts.sorted { $0.startDate > $1.startDate }
+    }
 
     var body: some View {
-        List {
-            refreshStatusSection
-            workoutListSection
+        Group {
+            switch viewMode {
+            case .timeline:
+                TrainingCalendarView(
+                    scheduleManager: scheduleManager,
+                    workoutManager: workoutManager,
+                    scheduledWorkouts: scheduleManager.scheduledWorkouts,
+                    selectedDate: $selectedDate
+                )
+            case .list:
+                List {
+                    RefreshWorkoutsSection(scheduleManager: scheduleManager)
+
+                    if !upcomingWorkouts.isEmpty {
+                        Section("Upcoming Plans") {
+                            ForEach(upcomingWorkouts, id: \.self) { scheduled in
+                                NavigationLink {
+                                    ScheduledWorkoutDetailView(scheduled: scheduled)
+                                } label: {
+                                    ScheduledWorkoutRow(scheduled: scheduled)
+                                }
+                            }
+                        }
+                    }
+
+                    if !completedWorkouts.isEmpty {
+                        Section("Completed Plans") {
+                            ForEach(completedWorkouts, id: \.self) { scheduled in
+                                NavigationLink {
+                                    ScheduledWorkoutDetailView(scheduled: scheduled)
+                                } label: {
+                                    ScheduledWorkoutRow(scheduled: scheduled)
+                                }
+                            }
+                        }
+                    }
+
+                    if !pastWorkouts.isEmpty {
+                        Section("Past Workouts") {
+                            ForEach(pastWorkouts) { summary in
+                                NavigationLink {
+                                    WorkoutDetailView(
+                                        summary: summary,
+                                        workoutManager: workoutManager
+                                    )
+                                } label: {
+                                    WorkoutRow(
+                                        summary: summary,
+                                        status: workoutManager.extractionStatuses[summary.id]
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        .navigationTitle("Workout Plans")
+        .navigationTitle("Training")
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("View Mode", selection: $viewMode) {
+                    Image(systemName: "calendar").tag(ViewMode.timeline)
+                    Image(systemName: "list.bullet").tag(ViewMode.list)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 120)
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 if !scheduleManager.scheduledWorkouts.isEmpty {
                     Button("Remove All", role: .destructive) {
@@ -42,86 +134,18 @@ struct ScheduledWorkoutsView: View {
         }
         .task {
             await scheduleManager.loadScheduledWorkouts()
+            workoutManager.fetchAllRecentWorkouts()
         }
         .overlay {
-            if scheduleManager.scheduledWorkouts.isEmpty && scheduleManager.refreshState == .idle {
+            if viewMode == .list
+                && scheduleManager.scheduledWorkouts.isEmpty
+                && workoutManager.allWorkouts.isEmpty
+                && scheduleManager.refreshState == .idle {
                 ContentUnavailableView(
-                    "No Workout Plans",
+                    "No Workouts",
                     systemImage: "figure.run.circle",
-                    description: Text("Tap \"Check for New Workouts\" to fetch plans from your coach.")
+                    description: Text("Tap \"Check for New Workouts\" to fetch plans, or complete a workout to see it here.")
                 )
-            }
-        }
-    }
-
-    // MARK: - Refresh Status
-
-    private var refreshStatusSection: some View {
-        Section {
-            Button {
-                Task {
-                    await scheduleManager.refreshFromServer()
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                    Text("Check for New Workouts")
-                    Spacer()
-                    refreshIndicator
-                }
-            }
-            .disabled(scheduleManager.refreshState == .fetching || isScheduling)
-
-            if case .done(let count) = scheduleManager.refreshState {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text(count == 0 ? "No new workouts" : "\(count) workout\(count == 1 ? "" : "s") scheduled")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if case .failed(let message) = scheduleManager.refreshState {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                    Text(message)
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var refreshIndicator: some View {
-        switch scheduleManager.refreshState {
-        case .fetching:
-            ProgressView()
-                .controlSize(.small)
-        case .scheduling(let current, let total):
-            Text("\(current)/\(total)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        default:
-            EmptyView()
-        }
-    }
-
-    private var isScheduling: Bool {
-        if case .scheduling = scheduleManager.refreshState { return true }
-        return false
-    }
-
-    // MARK: - Workout List
-
-    @ViewBuilder
-    private var workoutListSection: some View {
-        if !scheduleManager.scheduledWorkouts.isEmpty {
-            Section("Scheduled") {
-                ForEach(scheduleManager.scheduledWorkouts, id: \.self) { scheduled in
-                    ScheduledWorkoutRow(scheduled: scheduled)
-                }
             }
         }
     }

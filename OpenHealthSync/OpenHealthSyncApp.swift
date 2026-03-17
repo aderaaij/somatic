@@ -30,7 +30,7 @@ struct SomaticApp: App {
                     }
                 }
             } else {
-                ContentView(health: health, workoutManager: workoutManager, scheduleManager: scheduleManager)
+                MainTabView(health: health, workoutManager: workoutManager, scheduleManager: scheduleManager)
                     .onAppear {
                         if !health.restoreSession(host: serverURL) {
                             serverURL = ""

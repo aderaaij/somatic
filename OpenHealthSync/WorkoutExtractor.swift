@@ -12,6 +12,11 @@ import CoreLocation
 actor WorkoutExtractor {
     private let healthStore = HKHealthStore()
 
+    /// Max route points to send. Points beyond this are downsampled evenly.
+    private let maxRoutePoints = 2000
+    /// Max time series samples per metric. Longer workouts get downsampled.
+    private let maxTimeSeriesSamples = 1800
+
     // MARK: - Main Extraction
 
     func extractWorkout(_ workout: HKWorkout) async throws -> DetailedWorkout {
@@ -51,9 +56,21 @@ actor WorkoutExtractor {
         let vertOsc = try? await vertOscData
         let gct = try? await gctData
 
+        // Compute splits from full-resolution data before downsampling
         let splits = computeSplits(
             route: route ?? [], heartRate: hr, cadence: cad, power: pwr
         )
+
+        // Downsample for the JSON payload
+        let dsRoute = downsampleRoute(route)
+        let dsHr = downsampleTimeSeries(hr)
+        let dsCad = downsampleTimeSeries(cad)
+        let dsPwr = downsampleTimeSeries(pwr)
+        let dsSpd = downsampleTimeSeries(spd)
+        let dsStride = downsampleTimeSeries(stride)
+        let dsVertOsc = downsampleTimeSeries(vertOsc)
+        let dsGct = downsampleTimeSeries(gct)
+
         let activities = extractActivities(workout)
         let events = extractEvents(workout)
 
@@ -76,14 +93,14 @@ actor WorkoutExtractor {
             totalDistance: workout.statistics(for: HKQuantityType(.distanceWalkingRunning))?.sumQuantity()?.doubleValue(for: .meter()),
             totalEnergyBurned: workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie()),
             source: workout.sourceRevision.source.bundleIdentifier,
-            route: route?.isEmpty == true ? nil : route,
-            heartRate: nilIfEmpty(hr),
-            cadence: nilIfEmpty(cad),
-            power: nilIfEmpty(pwr),
-            speed: nilIfEmpty(spd),
-            strideLength: nilIfEmpty(stride),
-            verticalOscillation: nilIfEmpty(vertOsc),
-            groundContactTime: nilIfEmpty(gct),
+            route: nilIfEmpty(dsRoute),
+            heartRate: nilIfEmpty(dsHr),
+            cadence: nilIfEmpty(dsCad),
+            power: nilIfEmpty(dsPwr),
+            speed: nilIfEmpty(dsSpd),
+            strideLength: nilIfEmpty(dsStride),
+            verticalOscillation: nilIfEmpty(dsVertOsc),
+            groundContactTime: nilIfEmpty(dsGct),
             splits: splits?.isEmpty == true ? nil : splits,
             activities: activities?.isEmpty == true ? nil : activities,
             events: events?.isEmpty == true ? nil : events,
@@ -94,6 +111,39 @@ actor WorkoutExtractor {
     private func nilIfEmpty(_ array: [TimeSeries]?) -> [TimeSeries]? {
         guard let arr = array, !arr.isEmpty else { return nil }
         return arr
+    }
+
+    private func nilIfEmpty(_ array: [RoutePoint]?) -> [RoutePoint]? {
+        guard let arr = array, !arr.isEmpty else { return nil }
+        return arr
+    }
+
+    // MARK: - Downsampling
+
+    /// Evenly downsample route points, always keeping first and last.
+    private func downsampleRoute(_ points: [RoutePoint]?) -> [RoutePoint]? {
+        guard let points, points.count > maxRoutePoints else { return points }
+        return evenlySubsample(points, target: maxRoutePoints)
+    }
+
+    /// Evenly downsample time series, always keeping first and last.
+    private func downsampleTimeSeries(_ series: [TimeSeries]?) -> [TimeSeries]? {
+        guard let series, series.count > maxTimeSeriesSamples else { return series }
+        return evenlySubsample(series, target: maxTimeSeriesSamples)
+    }
+
+    /// Picks `target` evenly spaced elements from `array`, always including
+    /// the first and last element for correct time bounds.
+    private func evenlySubsample<T>(_ array: [T], target: Int) -> [T] {
+        guard array.count > target, target >= 2 else { return array }
+        var result: [T] = []
+        result.reserveCapacity(target)
+        let step = Double(array.count - 1) / Double(target - 1)
+        for i in 0..<target {
+            let index = Int((Double(i) * step).rounded())
+            result.append(array[index])
+        }
+        return result
     }
 
     // MARK: - Route

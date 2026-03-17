@@ -8,11 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		B273F6482F64958100D86611 /* OpenWearablesHealthSDK in Frameworks */ = {isa = PBXBuildFile; productRef = B273F6472F64958100D86611 /* OpenWearablesHealthSDK */; };
+		B2F00E362F6887E2005FE807 /* ScheduledWorkoutDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F00E352F6887E2005FE807 /* ScheduledWorkoutDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		B273F6372F64920300D86611 /* OpenHealthSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenHealthSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B273F6612F66F56C00D86611 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
+		B2F00E352F6887E2005FE807 /* ScheduledWorkoutDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledWorkoutDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -54,6 +56,7 @@
 				B273F6612F66F56C00D86611 /* Secrets.xcconfig */,
 				B273F6392F64920300D86611 /* OpenHealthSync */,
 				B273F6382F64920300D86611 /* Products */,
+				B2F00E352F6887E2005FE807 /* ScheduledWorkoutDetailView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -143,6 +146,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B2F00E362F6887E2005FE807 /* ScheduledWorkoutDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

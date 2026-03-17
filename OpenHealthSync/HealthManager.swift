@@ -16,6 +16,7 @@ import OpenWearablesHealthSDK
 /// can be enabled later from settings.
 enum HealthDataTier: String, CaseIterable, Identifiable {
     case core
+    case extended
     case nutrition
     case clinical
 
@@ -24,6 +25,7 @@ enum HealthDataTier: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .core: return "Activity & Fitness"
+        case .extended: return "Extended Metrics"
         case .nutrition: return "Nutrition"
         case .clinical: return "Clinical & Metabolic"
         }
@@ -31,7 +33,8 @@ enum HealthDataTier: String, CaseIterable, Identifiable {
 
     var description: String {
         switch self {
-        case .core: return "Steps, workouts, heart rate, sleep, and body measurements"
+        case .core: return "Steps, workouts, heart rate, sleep, and weight"
+        case .extended: return "Energy, cycling, body composition, mobility, and respiratory"
         case .nutrition: return "Calories, macronutrients, and hydration"
         case .clinical: return "Blood pressure, glucose, and advanced metrics"
         }
@@ -44,29 +47,31 @@ enum HealthDataTier: String, CaseIterable, Identifiable {
                 // Activity
                 .steps,
                 .activeEnergy,
-                .basalEnergy,
                 .distanceWalkingRunning,
-                .distanceCycling,
-                .flightsClimbed,
                 // Heart & Cardio
                 .heartRate,
                 .restingHeartRate,
                 .heartRateVariabilitySDNN,
                 .vo2Max,
-                .oxygenSaturation,
-                .respiratoryRate,
                 // Body
                 .bodyMass,
+                // Sleep & Workout
+                .sleep,
+                .workout,
+            ]
+        case .extended:
+            return [
+                .basalEnergy,
+                .distanceCycling,
+                .flightsClimbed,
+                .oxygenSaturation,
+                .respiratoryRate,
                 .height,
                 .bmi,
                 .bodyFatPercentage,
                 .leanBodyMass,
-                // Mobility
                 .walkingSpeed,
                 .walkingStepLength,
-                // Sleep & Workout
-                .sleep,
-                .workout,
             ]
         case .nutrition:
             return [
@@ -126,12 +131,17 @@ class SyncProgress: ObservableObject {
     }
 
     var statusSummary: String {
-        if !isSyncing && totalCount > 0 && completedCount == totalCount {
-            return "Up to date"
-        }
         if isSyncing {
             let mode = isFullExport ? "Initial sync" : "Syncing"
             return "\(mode) \(completedCount)/\(totalCount) types..."
+        }
+        if totalCount > 0 && completedCount == totalCount {
+            let updatedCount = types.filter { $0.sampleCount > 0 }.count
+            let upToDateCount = types.filter { $0.status == .skipped }.count
+            if updatedCount > 0 {
+                return "\(updatedCount) types updated, \(upToDateCount) already up to date"
+            }
+            return "All \(totalCount) types up to date"
         }
         return ""
     }
@@ -279,7 +289,11 @@ class SyncProgress: ObservableObject {
 class HealthManager: ObservableObject {
     @Published var status = "Not connected"
     @Published var logs: [String] = []
-    @Published var enabledTiers: Set<HealthDataTier> = [.core, .nutrition]
+    @Published var enabledTiers: Set<HealthDataTier> = [.core]
+    @Published var lastSyncDate: Date? = {
+        let interval = UserDefaults.standard.double(forKey: "lastSyncDate")
+        return interval > 0 ? Date(timeIntervalSince1970: interval) : nil
+    }()
     let syncProgress = SyncProgress()
 
     var onSyncCompleted: (() -> Void)?
@@ -296,7 +310,7 @@ class HealthManager: ObservableObject {
         return "https://\(trimmed)"
     }
 
-    /// Full setup: configure, sign in, request auth, and start syncing.
+    /// Full setup: configure, sign in, and request HealthKit authorization.
     func setup(host: String, userId: String, apiKey: String) {
         configureLogging()
 
@@ -312,7 +326,7 @@ class HealthManager: ObservableObject {
         isConfigured = true
         status = "Connecting..."
         addLog("SDK configured for \(host)")
-        requestAuthorizationAndSync()
+        requestAuthorization()
     }
 
     /// Restore an existing session on app launch.
@@ -326,7 +340,7 @@ class HealthManager: ObservableObject {
         if let restoredUserId = sdk.restoreSession() {
             addLog("Session restored for user: \(restoredUserId)")
             isConfigured = true
-            requestAuthorizationAndSync()
+            requestAuthorization()
             return true
         } else {
             addLog("No valid session found")
@@ -343,11 +357,13 @@ class HealthManager: ObservableObject {
         status = "Not connected"
         logs.removeAll()
         syncProgress.reset()
+        lastSyncDate = nil
+        UserDefaults.standard.removeObject(forKey: "lastSyncDate")
         addLog("Signed out")
     }
 
-    /// Request authorization for all enabled tiers, then start syncing.
-    func requestAuthorizationAndSync() {
+    /// Request HealthKit authorization for all enabled tiers (does not start syncing).
+    func requestAuthorization() {
         let allTypes = enabledTiers.flatMap { $0.types }
 
         status = "Requesting permissions..."
@@ -357,12 +373,7 @@ class HealthManager: ObservableObject {
             DispatchQueue.main.async {
                 if granted {
                     self?.status = "Connected"
-                    self?.addLog("HealthKit access granted, starting sync...")
-                    self?.sdk.startBackgroundSync { started in
-                        DispatchQueue.main.async {
-                            self?.addLog("Background sync started: \(started)")
-                        }
-                    }
+                    self?.addLog("HealthKit access granted")
                 } else {
                     self?.status = "Permission denied"
                     self?.addLog("HealthKit access denied")
@@ -372,8 +383,21 @@ class HealthManager: ObservableObject {
     }
 
     func syncNow() {
-        sdk.syncNow { }
-        addLog("Manual sync triggered")
+        syncProgress.reset()
+
+        let allTypes = enabledTiers.flatMap { $0.types }
+        sdk.requestAuthorization(types: allTypes) { [weak self] granted in
+            DispatchQueue.main.async {
+                if granted {
+                    self?.status = "Connected"
+                    self?.sdk.syncNow { }
+                    self?.addLog("Manual sync triggered")
+                } else {
+                    self?.status = "Permission denied"
+                    self?.addLog("HealthKit access denied, cannot sync")
+                }
+            }
+        }
     }
 
     func stopSync() {
@@ -392,6 +416,9 @@ class HealthManager: ObservableObject {
                 self?.syncProgress.processLog(message)
 
                 if message.contains("sync completed") {
+                    let now = Date()
+                    self?.lastSyncDate = now
+                    UserDefaults.standard.set(now.timeIntervalSince1970, forKey: "lastSyncDate")
                     self?.onSyncCompleted?()
                 }
             }

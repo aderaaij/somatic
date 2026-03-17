@@ -12,6 +12,7 @@ import HealthKit
 @MainActor
 class WorkoutManager: ObservableObject {
     @Published var workouts: [WorkoutSummary] = []
+    @Published var allWorkouts: [WorkoutSummary] = []
     @Published var extractionStatuses: [UUID: WorkoutExtractionStatus] = [:]
     @Published var activeFilter: HKWorkoutActivityType? = .running
 
@@ -47,17 +48,26 @@ class WorkoutManager: ObservableObject {
         let sort = NSSortDescriptor(
             key: HKSampleSortIdentifierStartDate, ascending: false
         )
-        let predicate: NSPredicate? = activeFilter.map {
-            HKQuery.predicateForWorkouts(with: $0)
+
+        // Combine date filter (6 months) with optional activity type filter
+        let datePredicate = HKQuery.predicateForSamples(
+            withStart: Calendar.current.date(byAdding: .month, value: -6, to: Date()),
+            end: nil,
+            options: .strictStartDate
+        )
+        let predicate: NSPredicate
+        if let activityPredicate = activeFilter.map({ HKQuery.predicateForWorkouts(with: $0) }) {
+            predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [datePredicate, activityPredicate])
+        } else {
+            predicate = datePredicate
         }
+
         let query = HKSampleQuery(
             sampleType: workoutType,
             predicate: predicate,
             limit: HKObjectQueryNoLimit,
             sortDescriptors: [sort]
         ) { [weak self] _, samples, _ in
-            // Map HKWorkout objects to lightweight summaries inside an
-            // autoreleasepool so the heavy HKWorkout array is freed promptly.
             let summaries: [WorkoutSummary] = autoreleasepool {
                 guard let hkWorkouts = samples as? [HKWorkout] else { return [] }
                 let deduplicated = Self.deduplicateWorkouts(hkWorkouts)
@@ -75,7 +85,56 @@ class WorkoutManager: ObservableObject {
 
             Task { @MainActor [weak self] in
                 self?.workouts = summaries
-                // Mark already-sent workouts
+                for summary in summaries {
+                    if self?.hasSentWorkout(summary.id) == true {
+                        self?.extractionStatuses[summary.id] = .sent(Date())
+                    }
+                }
+            }
+        }
+
+        healthStore.execute(query)
+    }
+
+    // MARK: - Fetch All Workouts (Unfiltered)
+
+    /// Fetches recent workouts regardless of activity type filter.
+    /// Used by the Training tab to show past workouts alongside scheduled plans.
+    /// Limited to last 6 months and capped at 200 results.
+    func fetchAllRecentWorkouts() {
+        let workoutType = HKWorkoutType.workoutType()
+        let sort = NSSortDescriptor(
+            key: HKSampleSortIdentifierStartDate, ascending: false
+        )
+        let datePredicate = HKQuery.predicateForSamples(
+            withStart: Calendar.current.date(byAdding: .month, value: -6, to: Date()),
+            end: nil,
+            options: .strictStartDate
+        )
+
+        let query = HKSampleQuery(
+            sampleType: workoutType,
+            predicate: datePredicate,
+            limit: 200,
+            sortDescriptors: [sort]
+        ) { [weak self] _, samples, _ in
+            let summaries: [WorkoutSummary] = autoreleasepool {
+                guard let hkWorkouts = samples as? [HKWorkout] else { return [] }
+                let deduplicated = Self.deduplicateWorkouts(hkWorkouts)
+                return deduplicated.map { workout in
+                    WorkoutSummary(
+                        id: workout.uuid,
+                        activityType: Self.activityTypeName(workout.workoutActivityType),
+                        activityName: Self.activityDisplayName(workout.workoutActivityType),
+                        startDate: workout.startDate,
+                        duration: workout.duration,
+                        distance: workout.totalDistance?.doubleValue(for: .meter())
+                    )
+                }
+            }
+
+            Task { @MainActor [weak self] in
+                self?.allWorkouts = summaries
                 for summary in summaries {
                     if self?.hasSentWorkout(summary.id) == true {
                         self?.extractionStatuses[summary.id] = .sent(Date())
@@ -127,23 +186,26 @@ class WorkoutManager: ObservableObject {
 
     // MARK: - Auto-Extract New Workouts
 
+    /// Maximum number of workouts to extract concurrently.
+    private static let maxConcurrentExtractions = 3
+
     func extractNewWorkouts() async {
         guard await apiClient.isConfigured else { return }
 
-        // Fetch recent workouts if we haven't yet
+        // Ensure we have a fresh workout list
         if workouts.isEmpty {
-            fetchRecentWorkouts()
-            // Wait briefly for the query to complete
-            try? await Task.sleep(for: .seconds(2))
+            await fetchRecentWorkoutsAsync()
         }
 
-        for summary in workouts {
-            if !hasSentWorkout(summary.id) &&
-                extractionStatuses[summary.id] != .extracting &&
-                extractionStatuses[summary.id] != .sending {
-                await extractAndSend(workoutID: summary.id)
-            }
+        // Filter to only unsent, non-in-progress workouts
+        let pending = workouts.filter { summary in
+            !hasSentWorkout(summary.id) &&
+            extractionStatuses[summary.id] != .extracting &&
+            extractionStatuses[summary.id] != .sending
         }
+
+        // Process concurrently in batches
+        await extractInBatches(pending)
     }
 
     // MARK: - Re-sync All
@@ -154,11 +216,88 @@ class WorkoutManager: ObservableObject {
         extractionStatuses.removeAll()
 
         // Re-fetch the list, then extract & send each one
-        fetchRecentWorkouts()
-        try? await Task.sleep(for: .seconds(2))
+        await fetchRecentWorkoutsAsync()
+        await extractInBatches(workouts)
+    }
 
-        for summary in workouts {
-            await extractAndSend(workoutID: summary.id)
+    // MARK: - Batch Extraction
+
+    /// Processes workouts concurrently in groups of `maxConcurrentExtractions`.
+    private func extractInBatches(_ summaries: [WorkoutSummary]) async {
+        await withTaskGroup(of: Void.self) { group in
+            var running = 0
+
+            for summary in summaries {
+                if running >= Self.maxConcurrentExtractions {
+                    await group.next()
+                    running -= 1
+                }
+
+                running += 1
+                group.addTask { [weak self] in
+                    await self?.extractAndSend(workoutID: summary.id)
+                }
+            }
+
+            await group.waitForAll()
+        }
+    }
+
+    // MARK: - Async Fetch Wrapper
+
+    /// Async wrapper around `fetchRecentWorkouts()` that waits for
+    /// the HealthKit query to complete instead of using sleep.
+    private func fetchRecentWorkoutsAsync() async {
+        await withCheckedContinuation { continuation in
+            let workoutType = HKWorkoutType.workoutType()
+            let sort = NSSortDescriptor(
+                key: HKSampleSortIdentifierStartDate, ascending: false
+            )
+            let datePredicate = HKQuery.predicateForSamples(
+                withStart: Calendar.current.date(byAdding: .month, value: -6, to: Date()),
+                end: nil,
+                options: .strictStartDate
+            )
+            let predicate: NSPredicate
+            if let activityPredicate = activeFilter.map({ HKQuery.predicateForWorkouts(with: $0) }) {
+                predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [datePredicate, activityPredicate])
+            } else {
+                predicate = datePredicate
+            }
+
+            let query = HKSampleQuery(
+                sampleType: workoutType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { [weak self] _, samples, _ in
+                let summaries: [WorkoutSummary] = autoreleasepool {
+                    guard let hkWorkouts = samples as? [HKWorkout] else { return [] }
+                    let deduplicated = Self.deduplicateWorkouts(hkWorkouts)
+                    return deduplicated.map { workout in
+                        WorkoutSummary(
+                            id: workout.uuid,
+                            activityType: Self.activityTypeName(workout.workoutActivityType),
+                            activityName: Self.activityDisplayName(workout.workoutActivityType),
+                            startDate: workout.startDate,
+                            duration: workout.duration,
+                            distance: workout.totalDistance?.doubleValue(for: .meter())
+                        )
+                    }
+                }
+
+                Task { @MainActor [weak self] in
+                    self?.workouts = summaries
+                    for summary in summaries {
+                        if self?.hasSentWorkout(summary.id) == true {
+                            self?.extractionStatuses[summary.id] = .sent(Date())
+                        }
+                    }
+                    continuation.resume()
+                }
+            }
+
+            healthStore.execute(query)
         }
     }
 
