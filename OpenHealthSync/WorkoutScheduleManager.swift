@@ -15,10 +15,28 @@ import HealthKit
 
 enum RefreshState: Equatable {
     case idle
-    case fetching
+    case syncing(step: SyncStep)
     case scheduling(current: Int, total: Int)
     case done(count: Int)
     case failed(message: String)
+}
+
+enum SyncStep: Int, Equatable, CaseIterable {
+    case inventory = 0
+    case actions = 1
+    case fetching = 2
+
+    var label: String {
+        switch self {
+        case .inventory: return "Syncing inventory…"
+        case .actions: return "Processing changes…"
+        case .fetching: return "Checking for workouts…"
+        }
+    }
+
+    var progress: Double {
+        Double(rawValue + 1) / Double(SyncStep.allCases.count + 1)
+    }
 }
 
 @MainActor
@@ -28,6 +46,28 @@ class WorkoutScheduleManager: ObservableObject {
     @Published var authorizationState: WorkoutScheduler.AuthorizationState = .notDetermined
 
     private let apiClient: WorkoutAPIClient
+
+    /// Maps workout plan UUIDs to the DateComponents they were scheduled at.
+    /// Needed by WorkoutScheduler.remove(_:at:) to identify which workout to remove.
+    private var scheduledDateMap: [UUID: DateComponents] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: "scheduledDateMap"),
+                  let decoded = try? JSONDecoder().decode([String: CodableDateComponents].self, from: data)
+            else { return [:] }
+            return decoded.reduce(into: [:]) { result, pair in
+                guard let uuid = UUID(uuidString: pair.key) else { return }
+                result[uuid] = pair.value.dateComponents
+            }
+        }
+        set {
+            let encodable = newValue.reduce(into: [String: CodableDateComponents]()) { result, pair in
+                result[pair.key.uuidString] = CodableDateComponents(pair.value)
+            }
+            if let data = try? JSONEncoder().encode(encodable) {
+                UserDefaults.standard.set(data, forKey: "scheduledDateMap")
+            }
+        }
+    }
 
     init(apiClient: WorkoutAPIClient) {
         self.apiClient = apiClient
@@ -43,14 +83,69 @@ class WorkoutScheduleManager: ObservableObject {
     // MARK: - Load Scheduled Workouts
 
     func loadScheduledWorkouts() async {
-        scheduledWorkouts = await WorkoutScheduler.shared.scheduledWorkouts
+        let current = await WorkoutScheduler.shared.scheduledWorkouts
+        scheduledWorkouts = current
+
+        // Backfill the date map for any workouts not yet tracked (e.g. legacy workouts
+        // scheduled before the date map existed).
+        var map = scheduledDateMap
+        var didChange = false
+        for scheduled in current {
+            if map[scheduled.plan.id] == nil {
+                map[scheduled.plan.id] = scheduled.date
+                didChange = true
+            }
+        }
+        if didChange {
+            scheduledDateMap = map
+        }
+    }
+
+    // MARK: - Sync Workout Inventory to Server
+
+    /// Reports all locally-scheduled workout IDs to the server so the LLM can
+    /// target them for edit/delete actions, even if they predate the queue system.
+    func syncWorkoutInventory() async {
+        let workouts = await WorkoutScheduler.shared.scheduledWorkouts
+        let inventory = workouts.map { scheduled -> WorkoutInventoryItem in
+            let name: String
+            switch scheduled.plan.workout {
+            case .custom(let custom):
+                name = custom.displayName ?? "Custom Workout"
+            case .goal(let goal):
+                name = "Goal: \(goal.activity.displayName)"
+            case .pacer(let pacer):
+                name = "Pacer: \(pacer.activity.displayName)"
+            case .swimBikeRun:
+                name = "Swim-Bike-Run"
+            @unknown default:
+                name = "Workout"
+            }
+            return WorkoutInventoryItem(
+                id: scheduled.plan.id,
+                displayName: name,
+                date: scheduled.date,
+                complete: scheduled.complete
+            )
+        }
+
+        do {
+            try await apiClient.syncInventory(inventory)
+        } catch {
+            print("Failed to sync workout inventory: \(error)")
+        }
     }
 
     // MARK: - Refresh from Server
 
     func refreshFromServer() async {
-        refreshState = .fetching
+        refreshState = .syncing(step: .inventory)
+        await syncWorkoutInventory()
 
+        refreshState = .syncing(step: .actions)
+        await syncEditsAndDeletes()
+
+        refreshState = .syncing(step: .fetching)
         do {
             let queue = try await apiClient.fetchQueue()
 
@@ -65,7 +160,7 @@ class WorkoutScheduleManager: ObservableObject {
 
                 do {
                     let customWorkout = try buildCustomWorkout(from: composition)
-                    let plan = WorkoutPlan(.custom(customWorkout))
+                    let plan = WorkoutPlan(.custom(customWorkout), id: composition.id)
 
                     let dateComponents = Calendar.current.dateComponents(
                         [.year, .month, .day, .hour, .minute],
@@ -73,6 +168,7 @@ class WorkoutScheduleManager: ObservableObject {
                     )
 
                     await WorkoutScheduler.shared.schedule(plan, at: dateComponents)
+                    scheduledDateMap[composition.id] = dateComponents
                     try await apiClient.deleteQueueItem(id: composition.id)
                     scheduled += 1
                 } catch {
@@ -92,7 +188,92 @@ class WorkoutScheduleManager: ObservableObject {
 
     func removeAll() async {
         await WorkoutScheduler.shared.removeAllWorkouts()
+        scheduledDateMap = [:]
         await loadScheduledWorkouts()
+    }
+
+    // MARK: - Remove Single Workout
+
+    func removeWorkout(id: UUID) async -> Bool {
+        guard let dateComponents = scheduledDateMap[id] else {
+            print("No stored date for workout \(id), cannot remove")
+            return false
+        }
+
+        // Find the matching plan in the scheduler
+        let allScheduled = await WorkoutScheduler.shared.scheduledWorkouts
+        guard let match = allScheduled.first(where: { $0.plan.id == id }) else {
+            print("Workout \(id) not found in scheduler")
+            scheduledDateMap.removeValue(forKey: id)
+            return false
+        }
+
+        await WorkoutScheduler.shared.remove(match.plan, at: dateComponents)
+        scheduledDateMap.removeValue(forKey: id)
+        await loadScheduledWorkouts()
+        return true
+    }
+
+    // MARK: - Edit Workout (remove + re-schedule)
+
+    func editWorkout(id: UUID, composition: QueuedWorkoutComposition) async -> Bool {
+        // Remove the old version
+        let removed = await removeWorkout(id: id)
+        if !removed {
+            print("Could not remove old workout \(id) for edit")
+        }
+
+        // Schedule the updated version
+        do {
+            let customWorkout = try buildCustomWorkout(from: composition)
+            let plan = WorkoutPlan(.custom(customWorkout), id: composition.id)
+
+            let dateComponents = Calendar.current.dateComponents(
+                [.year, .month, .day, .hour, .minute],
+                from: composition.scheduledDate
+            )
+
+            await WorkoutScheduler.shared.schedule(plan, at: dateComponents)
+            scheduledDateMap[composition.id] = dateComponents
+            await loadScheduledWorkouts()
+            return true
+        } catch {
+            print("Failed to schedule edited workout: \(error)")
+            return false
+        }
+    }
+
+    // MARK: - Sync Edits and Deletes from Server
+
+    func syncEditsAndDeletes() async {
+        do {
+            let actions = try await apiClient.fetchPendingActions()
+
+            for action in actions {
+                switch action.action {
+                case "delete":
+                    let success = await removeWorkout(id: action.workoutId)
+                    if success {
+                        try? await apiClient.acknowledgePendingAction(id: action.id)
+                    }
+
+                case "edit":
+                    guard let composition = action.composition else {
+                        print("Edit action \(action.id) missing composition")
+                        continue
+                    }
+                    let success = await editWorkout(id: action.workoutId, composition: composition)
+                    if success {
+                        try? await apiClient.acknowledgePendingAction(id: action.id)
+                    }
+
+                default:
+                    print("Unknown action type: \(action.action)")
+                }
+            }
+        } catch {
+            print("Failed to sync edits/deletes: \(error)")
+        }
     }
 
     // MARK: - Build CustomWorkout

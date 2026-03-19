@@ -57,3 +57,53 @@ struct CompositionAlert: Codable, Sendable {
     let zone: Int?
     let unit: String?               // "metersPerSecond", "kilometersPerHour", "beatsPerMinute", "stepsPerMinute", "watts"
 }
+
+// MARK: - Pending Actions (edit/delete from server)
+
+struct PendingWorkoutAction: Codable, Sendable, Identifiable {
+    let id: UUID                    // Action ID (for acknowledgement)
+    let workoutId: UUID             // The workout plan UUID to act on
+    let action: String              // "edit" or "delete"
+    let composition: QueuedWorkoutComposition?  // Present only for "edit" actions
+}
+
+// MARK: - Workout Inventory (app → server sync)
+
+/// Sent to the server so the LLM knows which workouts are currently scheduled
+/// on-device, including legacy workouts that predate the queue system.
+struct WorkoutInventoryItem: Codable, Sendable {
+    let id: UUID
+    let displayName: String
+    let date: CodableDateComponents
+    let complete: Bool
+
+    init(id: UUID, displayName: String, date: DateComponents, complete: Bool) {
+        self.id = id
+        self.displayName = displayName
+        self.date = CodableDateComponents(date)
+        self.complete = complete
+    }
+}
+
+// MARK: - Codable DateComponents Helper
+
+/// Lightweight wrapper to persist DateComponents in UserDefaults via JSON.
+struct CodableDateComponents: Codable {
+    let year: Int?
+    let month: Int?
+    let day: Int?
+    let hour: Int?
+    let minute: Int?
+
+    init(_ dc: DateComponents) {
+        self.year = dc.year
+        self.month = dc.month
+        self.day = dc.day
+        self.hour = dc.hour
+        self.minute = dc.minute
+    }
+
+    var dateComponents: DateComponents {
+        DateComponents(year: year, month: month, day: day, hour: hour, minute: minute)
+    }
+}

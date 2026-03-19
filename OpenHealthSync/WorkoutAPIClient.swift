@@ -46,6 +46,28 @@ actor WorkoutAPIClient {
         }
     }
 
+    // MARK: - Workout Inventory Sync
+
+    func syncInventory(_ inventory: [WorkoutInventoryItem]) async throws {
+        let url = baseURL.appendingPathComponent("api/workouts/inventory")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(inventory)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw WorkoutAPIError.serverError(httpResponse.statusCode)
+        }
+    }
+
     // MARK: - Workout Queue
 
     func fetchQueue() async throws -> [QueuedWorkoutComposition] {
@@ -69,6 +91,50 @@ actor WorkoutAPIClient {
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode([QueuedWorkoutComposition].self, from: data)
     }
+
+    // MARK: - Pending Actions (edit/delete)
+
+    func fetchPendingActions() async throws -> [PendingWorkoutAction] {
+        let url = baseURL.appendingPathComponent("api/workouts/actions")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw WorkoutAPIError.serverError(httpResponse.statusCode)
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([PendingWorkoutAction].self, from: data)
+    }
+
+    func acknowledgePendingAction(id: UUID) async throws {
+        let url = baseURL.appendingPathComponent("api/workouts/actions/\(id.uuidString)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw WorkoutAPIError.serverError(httpResponse.statusCode)
+        }
+    }
+
+    // MARK: - Queue Item Deletion
 
     func deleteQueueItem(id: UUID) async throws {
         let url = baseURL.appendingPathComponent("api/workouts/queue/\(id.uuidString)")

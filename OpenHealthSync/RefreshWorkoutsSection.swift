@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Shared Content
 
-/// The refresh button and status indicators, usable in any container.
+/// The sync button and status indicators, usable in any container.
 struct RefreshWorkoutsContent: View {
     @ObservedObject var scheduleManager: WorkoutScheduleManager
 
@@ -13,19 +13,28 @@ struct RefreshWorkoutsContent: View {
             }
         } label: {
             HStack {
-                Image(systemName: "arrow.clockwise")
-                Text("Check for New Workouts")
+                Image(systemName: "arrow.triangle.2.circlepath")
+                Text("Sync Workouts")
                 Spacer()
-                refreshIndicator
             }
         }
-        .disabled(scheduleManager.refreshState == .fetching || isScheduling)
+        .disabled(isBusy)
+
+        if isBusy {
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: syncProgress, total: 1.0)
+                    .tint(.accentColor)
+                Text(syncLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
 
         if case .done(let count) = scheduleManager.refreshState {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text(count == 0 ? "No new workouts" : "\(count) workout\(count == 1 ? "" : "s") scheduled")
+                Text(count == 0 ? "All workouts up to date" : "\(count) workout\(count == 1 ? "" : "s") scheduled")
                     .foregroundStyle(.secondary)
             }
         }
@@ -41,24 +50,36 @@ struct RefreshWorkoutsContent: View {
         }
     }
 
-    @ViewBuilder
-    private var refreshIndicator: some View {
+    private var isBusy: Bool {
         switch scheduleManager.refreshState {
-        case .fetching:
-            ProgressView()
-                .controlSize(.small)
-        case .scheduling(let current, let total):
-            Text("\(current)/\(total)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        case .syncing, .scheduling:
+            return true
         default:
-            EmptyView()
+            return false
         }
     }
 
-    private var isScheduling: Bool {
-        if case .scheduling = scheduleManager.refreshState { return true }
-        return false
+    private var syncProgress: Double {
+        switch scheduleManager.refreshState {
+        case .syncing(let step):
+            return step.progress
+        case .scheduling(let current, let total):
+            guard total > 0 else { return 1.0 }
+            return Double(current) / Double(total)
+        default:
+            return 0
+        }
+    }
+
+    private var syncLabel: String {
+        switch scheduleManager.refreshState {
+        case .syncing(let step):
+            return step.label
+        case .scheduling(let current, let total):
+            return "Scheduling \(current) of \(total)…"
+        default:
+            return ""
+        }
     }
 }
 

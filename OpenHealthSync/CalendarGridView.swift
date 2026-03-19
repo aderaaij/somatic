@@ -19,13 +19,24 @@ struct WeekStripView: View {
         }
     }
 
+    /// The date used for the month/year header — derived from the visible week.
+    private var displayedMonth: Date {
+        if let week = scrolledWeek {
+            // Use the middle of the week (Wed/Thu) to determine the displayed month,
+            // so a week spanning two months shows the month with more days visible.
+            return calendar.date(byAdding: .day, value: 3, to: week) ?? week
+        }
+        return selectedDate
+    }
+
     var body: some View {
         VStack(spacing: 4) {
-            Text(selectedDate, format: .dateTime.month(.wide).year())
+            Text(displayedMonth, format: .dateTime.month(.wide).year())
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal)
+                .animation(.none, value: displayedMonth)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 0) {
