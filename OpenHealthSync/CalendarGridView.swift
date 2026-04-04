@@ -7,8 +7,13 @@ struct WeekStripView: View {
     @Binding var selectedDate: Date
 
     @State private var scrolledWeek: Date?
+    @AppStorage("weekStartsOnMonday") private var weekStartsOnMonday: Bool = true
 
-    private let calendar = Calendar.current
+    private var calendar: Calendar {
+        var cal = Calendar.current
+        cal.firstWeekday = weekStartsOnMonday ? 2 : 1  // 2 = Monday, 1 = Sunday
+        return cal
+    }
 
     /// Generate week start dates: 13 weeks back and 13 weeks forward from today.
     private var weekStarts: [Date] {

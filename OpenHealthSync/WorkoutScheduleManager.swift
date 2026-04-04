@@ -10,6 +10,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import SwiftData
 import WorkoutKit
 import HealthKit
 
@@ -44,6 +45,8 @@ class WorkoutScheduleManager: ObservableObject {
     @Published var scheduledWorkouts: [ScheduledWorkoutPlan] = []
     @Published var refreshState: RefreshState = .idle
     @Published var authorizationState: WorkoutScheduler.AuthorizationState = .notDetermined
+    @Published var activePlan: TrainingPlan?
+    @Published var planWorkouts: [PlanWorkout] = []
 
     private let apiClient: WorkoutAPIClient
 
@@ -101,6 +104,23 @@ class WorkoutScheduleManager: ObservableObject {
         }
     }
 
+    // MARK: - Active Plan
+
+    func loadActivePlan() async {
+        do {
+            let plan = try await apiClient.fetchActivePlan()
+            activePlan = plan
+
+            if let plan {
+                planWorkouts = try await apiClient.fetchPlanWorkouts(planId: plan.id)
+            } else {
+                planWorkouts = []
+            }
+        } catch {
+            print("Failed to load active plan: \(error)")
+        }
+    }
+
     // MARK: - Sync Workout Inventory to Server
 
     /// Reports all locally-scheduled workout IDs to the server so the LLM can
@@ -131,14 +151,55 @@ class WorkoutScheduleManager: ObservableObject {
 
         do {
             try await apiClient.syncInventory(inventory)
+
+            // Update queue status to 'completed' for finished workouts
+            for item in inventory where item.complete {
+                try? await apiClient.updateQueueItemStatus(id: item.id, status: "completed")
+            }
         } catch {
             print("Failed to sync workout inventory: \(error)")
         }
     }
 
+    // MARK: - Auto Sync
+
+    /// Lightweight check for pending queue items and actions.
+    /// Runs the full refresh silently if there's work to do.
+    func autoSync(modelContext: ModelContext? = nil) async {
+        // Don't auto-sync if a manual refresh is in progress
+        switch refreshState {
+        case .idle, .done:
+            break
+        default:
+            return
+        }
+
+        do {
+            let queue = try await apiClient.fetchQueue()
+            let actions = try await apiClient.fetchPendingActions()
+
+            if !queue.isEmpty || !actions.isEmpty {
+                print("[AutoSync] Found \(queue.count) queued workouts, \(actions.count) pending actions")
+                await refreshFromServer(modelContext: modelContext)
+                await loadActivePlan()
+            } else {
+                // Still sync inventory to report completion status
+                await syncWorkoutInventory()
+            }
+        } catch {
+            // Silent failure — auto-sync is best-effort
+            print("[AutoSync] Check failed: \(error)")
+        }
+    }
+
     // MARK: - Refresh from Server
 
-    func refreshFromServer() async {
+    func refreshFromServer(modelContext: ModelContext? = nil) async {
+        // Sync any unsynced feedback entries first
+        if let modelContext {
+            await syncUnsyncedFeedback(modelContext: modelContext)
+        }
+
         refreshState = .syncing(step: .inventory)
         await syncWorkoutInventory()
 
@@ -169,7 +230,7 @@ class WorkoutScheduleManager: ObservableObject {
 
                     await WorkoutScheduler.shared.schedule(plan, at: dateComponents)
                     scheduledDateMap[composition.id] = dateComponents
-                    try await apiClient.deleteQueueItem(id: composition.id)
+                    try await apiClient.updateQueueItemStatus(id: composition.id, status: "synced")
                     scheduled += 1
                 } catch {
                     print("Failed to schedule '\(composition.displayName)': \(error)")
@@ -212,6 +273,96 @@ class WorkoutScheduleManager: ObservableObject {
         scheduledDateMap.removeValue(forKey: id)
         await loadScheduledWorkouts()
         return true
+    }
+
+    // MARK: - Reschedule Workout (same workout, new date)
+
+    /// Moves a workout to a new date without changing its content.
+    /// Used by the missed workout feedback flow when the user taps "Reschedule".
+    func rescheduleWorkout(id: UUID, to newDate: Date) async -> Bool {
+        // Find the existing plan in the scheduler
+        let allScheduled = await WorkoutScheduler.shared.scheduledWorkouts
+        guard let match = allScheduled.first(where: { $0.plan.id == id }) else {
+            print("Workout \(id) not found in scheduler for reschedule")
+            return false
+        }
+
+        // Remove from old date
+        let removed = await removeWorkout(id: id)
+        if !removed {
+            print("Could not remove workout \(id) from old date for reschedule")
+        }
+
+        // Schedule at new date
+        let newDateComponents = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute],
+            from: newDate
+        )
+
+        await WorkoutScheduler.shared.schedule(match.plan, at: newDateComponents)
+        scheduledDateMap[id] = newDateComponents
+        await loadScheduledWorkouts()
+        return true
+    }
+
+    // MARK: - Sync Feedback to Server
+
+    /// Fire-and-forget upload of feedback to the training API.
+    /// Marks the SwiftData entry as synced on success.
+    func syncFeedback(_ payload: WorkoutFeedbackPayload, feedbackId: UUID, modelContext: ModelContext) {
+        Task {
+            do {
+                try await apiClient.submitFeedback(payload)
+                markFeedbackSynced(id: feedbackId, modelContext: modelContext)
+            } catch {
+                print("Feedback sync failed (will retry on next sync): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Retry uploading any feedback entries that haven't been synced yet.
+    /// Called during the refresh flow to catch entries that failed on first attempt.
+    func syncUnsyncedFeedback(modelContext: ModelContext) async {
+        let descriptor = FetchDescriptor<WorkoutFeedback>(
+            predicate: #Predicate<WorkoutFeedback> { $0.synced == false }
+        )
+        guard let unsynced = try? modelContext.fetch(descriptor), !unsynced.isEmpty else {
+            return
+        }
+
+        for feedback in unsynced {
+            let payload = WorkoutFeedbackPayload(
+                id: feedback.id,
+                workoutId: feedback.workoutId,
+                workoutName: feedback.workoutName,
+                scheduledDate: feedback.scheduledDate,
+                detectedAt: feedback.detectedAt,
+                acknowledgedAt: feedback.acknowledgedAt,
+                reason: feedback.reason.rawValue,
+                reasonNote: feedback.reasonNote,
+                action: feedback.action.rawValue,
+                newDate: feedback.newDate,
+                dismissed: feedback.dismissed
+            )
+            do {
+                try await apiClient.submitFeedback(payload)
+                feedback.synced = true
+            } catch {
+                print("Retry sync failed for feedback \(feedback.id): \(error.localizedDescription)")
+            }
+        }
+
+        try? modelContext.save()
+    }
+
+    private func markFeedbackSynced(id: UUID, modelContext: ModelContext) {
+        let descriptor = FetchDescriptor<WorkoutFeedback>(
+            predicate: #Predicate<WorkoutFeedback> { $0.id == id }
+        )
+        if let feedback = try? modelContext.fetch(descriptor).first {
+            feedback.synced = true
+            try? modelContext.save()
+        }
     }
 
     // MARK: - Edit Workout (remove + re-schedule)

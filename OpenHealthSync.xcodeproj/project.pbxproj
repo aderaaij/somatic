@@ -10,6 +10,7 @@
 		B273F6482F64958100D86611 /* OpenWearablesHealthSDK in Frameworks */ = {isa = PBXBuildFile; productRef = B273F6472F64958100D86611 /* OpenWearablesHealthSDK */; };
 		B2F00E362F6887E2005FE807 /* ScheduledWorkoutDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F00E352F6887E2005FE807 /* ScheduledWorkoutDetailView.swift */; };
 		B2F00E382F6B0BBC005FE807 /* WORKOUT_ACTIONS_API_SPEC.md in Resources */ = {isa = PBXBuildFile; fileRef = B2F00E372F6B0BBC005FE807 /* WORKOUT_ACTIONS_API_SPEC.md */; };
+		B2F00E462F6DABC1005FE807 /* FEEDBACK_API_SPEC.md in Resources */ = {isa = PBXBuildFile; fileRef = B2F00E452F6DABC1005FE807 /* FEEDBACK_API_SPEC.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -17,6 +18,7 @@
 		B273F6612F66F56C00D86611 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 		B2F00E352F6887E2005FE807 /* ScheduledWorkoutDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledWorkoutDetailView.swift; sourceTree = "<group>"; };
 		B2F00E372F6B0BBC005FE807 /* WORKOUT_ACTIONS_API_SPEC.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = WORKOUT_ACTIONS_API_SPEC.md; sourceTree = "<group>"; };
+		B2F00E452F6DABC1005FE807 /* FEEDBACK_API_SPEC.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = FEEDBACK_API_SPEC.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -60,6 +62,7 @@
 				B273F6382F64920300D86611 /* Products */,
 				B2F00E352F6887E2005FE807 /* ScheduledWorkoutDetailView.swift */,
 				B2F00E372F6B0BBC005FE807 /* WORKOUT_ACTIONS_API_SPEC.md */,
+				B2F00E452F6DABC1005FE807 /* FEEDBACK_API_SPEC.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -139,6 +142,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B2F00E462F6DABC1005FE807 /* FEEDBACK_API_SPEC.md in Resources */,
 				B2F00E382F6B0BBC005FE807 /* WORKOUT_ACTIONS_API_SPEC.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -19,7 +19,7 @@ actor WorkoutExtractor {
 
     // MARK: - Main Extraction
 
-    func extractWorkout(_ workout: HKWorkout) async throws -> DetailedWorkout {
+    func extractWorkout(_ workout: HKWorkout, planWorkoutId: UUID? = nil) async throws -> DetailedWorkout {
         let bpm = HKUnit.count().unitDivided(by: .minute())
         let mps = HKUnit.meter().unitDivided(by: .second())
 
@@ -86,6 +86,7 @@ actor WorkoutExtractor {
 
         return DetailedWorkout(
             id: workout.uuid,
+            planWorkoutId: planWorkoutId,
             activityType: activityType,
             startDate: workout.startDate,
             endDate: workout.endDate,
@@ -360,9 +361,7 @@ actor WorkoutExtractor {
 
     func extractActivities(_ workout: HKWorkout) -> [WorkoutActivityData]? {
         let activities = workout.workoutActivities
-        // If there's only one activity that spans the whole workout, it's the
-        // implicit default activity — no structured intervals to report.
-        if activities.count <= 1 { return nil }
+        guard !activities.isEmpty else { return nil }
 
         let bpm = HKUnit.count().unitDivided(by: .minute())
 

@@ -5,7 +5,7 @@
     <key>CFBundleDisplayName</key>
     <string>Somatic</string>
     <key>NSHealthShareUsageDescription</key>
-    <string>This app syncs your health data to your personal Open Wearables server.</string>
+    <string>Somatic reads your health and workout data to sync with your training server for personalized coaching.</string>
     <key>UIBackgroundModes</key>
     <array>
         <string>fetch</string>

@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import HealthKit
+import WorkoutKit
 
 @MainActor
 class WorkoutManager: ObservableObject {
@@ -18,6 +19,7 @@ class WorkoutManager: ObservableObject {
 
     let extractor = WorkoutExtractor()
     let apiClient = WorkoutAPIClient()
+    weak var scheduleManager: WorkoutScheduleManager?
 
     private let healthStore = HKHealthStore()
     private let sentKey = "sentWorkoutUUIDs"
@@ -157,11 +159,14 @@ class WorkoutManager: ObservableObject {
 
         extractionStatuses[workoutID] = .extracting
 
+        // Try to match this workout to a scheduled plan workout
+        let planId = findPlanWorkoutId(for: workout)
+
         do {
             // Encode inside autoreleasepool so route/HR arrays are freed
             // before moving on to the next workout.
             let jsonData: Data = try await {
-                let detailed = try await extractor.extractWorkout(workout)
+                let detailed = try await extractor.extractWorkout(workout, planWorkoutId: planId)
                 return try autoreleasepool {
                     let encoder = JSONEncoder()
                     encoder.dateEncodingStrategy = .iso8601
@@ -184,6 +189,38 @@ class WorkoutManager: ObservableObject {
         }
     }
 
+    // MARK: - Plan Workout Matching
+
+    /// Matches a completed HKWorkout to a scheduled plan workout by date proximity and activity type.
+    private func findPlanWorkoutId(for workout: HKWorkout) -> UUID? {
+        guard let scheduledWorkouts = scheduleManager?.scheduledWorkouts else { return nil }
+
+        let calendar = Calendar.current
+        let oneHour: TimeInterval = 3600
+
+        // Find completed plan workouts that match by activity type and time
+        let candidates = scheduledWorkouts.compactMap { scheduled -> (UUID, TimeInterval)? in
+            guard scheduled.complete else { return nil }
+
+            // Resolve scheduled date from DateComponents
+            guard let scheduledDate = calendar.date(from: scheduled.date) else { return nil }
+
+            // Check time proximity (±1 hour)
+            let timeDiff = abs(workout.startDate.timeIntervalSince(scheduledDate))
+            guard timeDiff <= oneHour else { return nil }
+
+            return (scheduled.plan.id, timeDiff)
+        }
+
+        guard !candidates.isEmpty else { return nil }
+
+        // If single match, return it
+        if candidates.count == 1 { return candidates[0].0 }
+
+        // Multiple candidates — pick closest by time
+        return candidates.min(by: { $0.1 < $1.1 })?.0
+    }
+
     // MARK: - Auto-Extract New Workouts
 
     /// Maximum number of workouts to extract concurrently.
@@ -192,13 +229,12 @@ class WorkoutManager: ObservableObject {
     func extractNewWorkouts() async {
         guard await apiClient.isConfigured else { return }
 
-        // Ensure we have a fresh workout list
-        if workouts.isEmpty {
-            await fetchRecentWorkoutsAsync()
-        }
+        // Fetch all workout types (not just the UI filter) so strength,
+        // flexibility, etc. are also extracted and sent to the Training API.
+        await fetchAllRecentWorkoutsAsync()
 
         // Filter to only unsent, non-in-progress workouts
-        let pending = workouts.filter { summary in
+        let pending = allWorkouts.filter { summary in
             !hasSentWorkout(summary.id) &&
             extractionStatuses[summary.id] != .extracting &&
             extractionStatuses[summary.id] != .sending
@@ -288,6 +324,55 @@ class WorkoutManager: ObservableObject {
 
                 Task { @MainActor [weak self] in
                     self?.workouts = summaries
+                    for summary in summaries {
+                        if self?.hasSentWorkout(summary.id) == true {
+                            self?.extractionStatuses[summary.id] = .sent(Date())
+                        }
+                    }
+                    continuation.resume()
+                }
+            }
+
+            healthStore.execute(query)
+        }
+    }
+
+    /// Async wrapper around `fetchAllRecentWorkouts()` — fetches all workout types.
+    private func fetchAllRecentWorkoutsAsync() async {
+        await withCheckedContinuation { continuation in
+            let workoutType = HKWorkoutType.workoutType()
+            let sort = NSSortDescriptor(
+                key: HKSampleSortIdentifierStartDate, ascending: false
+            )
+            let datePredicate = HKQuery.predicateForSamples(
+                withStart: Calendar.current.date(byAdding: .month, value: -6, to: Date()),
+                end: nil,
+                options: .strictStartDate
+            )
+
+            let query = HKSampleQuery(
+                sampleType: workoutType,
+                predicate: datePredicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { [weak self] _, samples, _ in
+                let summaries: [WorkoutSummary] = autoreleasepool {
+                    guard let hkWorkouts = samples as? [HKWorkout] else { return [] }
+                    let deduplicated = Self.deduplicateWorkouts(hkWorkouts)
+                    return deduplicated.map { workout in
+                        WorkoutSummary(
+                            id: workout.uuid,
+                            activityType: Self.activityTypeName(workout.workoutActivityType),
+                            activityName: Self.activityDisplayName(workout.workoutActivityType),
+                            startDate: workout.startDate,
+                            duration: workout.duration,
+                            distance: workout.totalDistance?.doubleValue(for: .meter())
+                        )
+                    }
+                }
+
+                Task { @MainActor [weak self] in
+                    self?.allWorkouts = summaries
                     for summary in summaries {
                         if self?.hasSentWorkout(summary.id) == true {
                             self?.extractionStatuses[summary.id] = .sent(Date())

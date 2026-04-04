@@ -21,6 +21,7 @@ enum WorkoutExtractionStatus: Equatable {
 
 struct DetailedWorkout: Codable, Sendable {
     let id: UUID
+    let planWorkoutId: UUID?
     let activityType: String
     let startDate: Date
     let endDate: Date

@@ -1,15 +1,17 @@
 import SwiftUI
+import SwiftData
 
 // MARK: - Shared Content
 
 /// The sync button and status indicators, usable in any container.
 struct RefreshWorkoutsContent: View {
     @ObservedObject var scheduleManager: WorkoutScheduleManager
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         Button {
             Task {
-                await scheduleManager.refreshFromServer()
+                await scheduleManager.refreshFromServer(modelContext: modelContext)
             }
         } label: {
             HStack {

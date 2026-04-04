@@ -13,21 +13,52 @@ import HealthKit
 struct TrainingTabView: View {
     @ObservedObject var scheduleManager: WorkoutScheduleManager
     @ObservedObject var workoutManager: WorkoutManager
-    @State private var showRemoveAllConfirmation = false
+    @ObservedObject var missedWorkoutDetector: MissedWorkoutDetector
+    @Environment(\.modelContext) private var modelContext
     @State private var viewMode: ViewMode = .timeline
     @State private var selectedDate: Date?
+    @State private var feedbackWorkout: MissedWorkoutInfo?
 
     enum ViewMode: String, CaseIterable {
         case timeline, list
     }
 
+    private var isSyncing: Bool {
+        switch scheduleManager.refreshState {
+        case .syncing, .scheduling: true
+        default: false
+        }
+    }
+
+    private var startOfToday: Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
     private var upcomingWorkouts: [ScheduledWorkoutPlan] {
         scheduleManager.scheduledWorkouts
-            .filter { !$0.complete }
+            .filter { workout in
+                guard !workout.complete else { return false }
+                let scheduledDate = Calendar.current.date(from: workout.date) ?? .distantFuture
+                return scheduledDate >= startOfToday
+            }
             .sorted {
                 let date0 = Calendar.current.date(from: $0.date) ?? .distantFuture
                 let date1 = Calendar.current.date(from: $1.date) ?? .distantFuture
                 return date0 < date1
+            }
+    }
+
+    private var missedWorkoutsInList: [ScheduledWorkoutPlan] {
+        scheduleManager.scheduledWorkouts
+            .filter { workout in
+                guard !workout.complete else { return false }
+                let scheduledDate = Calendar.current.date(from: workout.date) ?? .distantFuture
+                return scheduledDate < startOfToday
+            }
+            .sorted {
+                let date0 = Calendar.current.date(from: $0.date) ?? .distantPast
+                let date1 = Calendar.current.date(from: $1.date) ?? .distantPast
+                return date0 > date1
             }
     }
 
@@ -52,15 +83,59 @@ struct TrainingTabView: View {
                 TrainingCalendarView(
                     scheduleManager: scheduleManager,
                     workoutManager: workoutManager,
+                    missedWorkoutDetector: missedWorkoutDetector,
                     scheduledWorkouts: scheduleManager.scheduledWorkouts,
                     selectedDate: $selectedDate
                 )
             case .list:
                 List {
-                    RefreshWorkoutsSection(scheduleManager: scheduleManager)
+                    if !missedWorkoutDetector.missedWorkouts.isEmpty {
+                        Section {
+                            MissedWorkoutBanner(detector: missedWorkoutDetector)
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+
+                    if let plan = scheduleManager.activePlan {
+                        Section {
+                            PlanOverviewCard(
+                                plan: plan,
+                                planWorkouts: scheduleManager.planWorkouts,
+                                scheduledWorkouts: scheduleManager.scheduledWorkouts
+                            )
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                        }
+                    }
+
+                    if !missedWorkoutsInList.isEmpty {
+                        Section("Missed") {
+                            ForEach(missedWorkoutsInList, id: \.self) { scheduled in
+                                if let missedInfo = missedWorkoutDetector.missedInfo(for: scheduled.plan.id) {
+                                    Button {
+                                        feedbackWorkout = missedInfo
+                                    } label: {
+                                        ScheduledWorkoutRow(scheduled: scheduled, isMissed: true)
+                                    }
+                                } else {
+                                    Button {
+                                        // Past-due but not yet detected as missed — treat as missed
+                                        feedbackWorkout = MissedWorkoutInfo(
+                                            id: scheduled.plan.id,
+                                            displayName: workoutDisplayName(for: scheduled),
+                                            scheduledDate: Calendar.current.date(from: scheduled.date) ?? Date()
+                                        )
+                                    } label: {
+                                        ScheduledWorkoutRow(scheduled: scheduled, isMissed: true)
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     if !upcomingWorkouts.isEmpty {
-                        Section("Upcoming Plans") {
+                        Section("Upcoming Workouts") {
                             ForEach(upcomingWorkouts, id: \.self) { scheduled in
                                 NavigationLink {
                                     ScheduledWorkoutDetailView(scheduled: scheduled)
@@ -72,7 +147,7 @@ struct TrainingTabView: View {
                     }
 
                     if !completedWorkouts.isEmpty {
-                        Section("Completed Plans") {
+                        Section("Completed Workouts") {
                             ForEach(completedWorkouts, id: \.self) { scheduled in
                                 NavigationLink {
                                     ScheduledWorkoutDetailView(scheduled: scheduled)
@@ -105,6 +180,16 @@ struct TrainingTabView: View {
         }
         .navigationTitle("Training")
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    Task {
+                        await scheduleManager.refreshFromServer(modelContext: modelContext)
+                    }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isSyncing)
+            }
             ToolbarItem(placement: .principal) {
                 Picker("View Mode", selection: $viewMode) {
                     Image(systemName: "calendar").tag(ViewMode.timeline)
@@ -113,28 +198,20 @@ struct TrainingTabView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 120)
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                if !scheduleManager.scheduledWorkouts.isEmpty {
-                    Button("Remove All", role: .destructive) {
-                        showRemoveAllConfirmation = true
-                    }
-                }
-            }
         }
-        .confirmationDialog(
-            "Remove all scheduled workouts?",
-            isPresented: $showRemoveAllConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Remove All", role: .destructive) {
-                Task {
-                    await scheduleManager.removeAll()
-                }
-            }
+        .sheet(item: $feedbackWorkout) { workout in
+            MissedWorkoutFeedbackFlow(
+                missedWorkouts: [workout],
+                detector: missedWorkoutDetector
+            )
         }
         .task {
             await scheduleManager.loadScheduledWorkouts()
             workoutManager.fetchAllRecentWorkouts()
+            missedWorkoutDetector.checkForMissedWorkouts(
+                scheduledWorkouts: scheduleManager.scheduledWorkouts,
+                modelContext: modelContext
+            )
         }
         .overlay {
             if viewMode == .list
@@ -149,17 +226,33 @@ struct TrainingTabView: View {
             }
         }
     }
+
+    private func workoutDisplayName(for scheduled: ScheduledWorkoutPlan) -> String {
+        switch scheduled.plan.workout {
+        case .custom(let custom):
+            return custom.displayName ?? "Custom Workout"
+        case .goal(let goal):
+            return "Goal: \(goal.activity.name)"
+        case .pacer(let pacer):
+            return "Pacer: \(pacer.activity.name)"
+        case .swimBikeRun:
+            return "Swim-Bike-Run"
+        @unknown default:
+            return "Workout"
+        }
+    }
 }
 
 // MARK: - Row
 
 struct ScheduledWorkoutRow: View {
     let scheduled: ScheduledWorkoutPlan
+    var isMissed: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "applewatch")
-                .foregroundStyle(.blue)
+            Image(systemName: isMissed ? "exclamationmark.circle" : "applewatch")
+                .foregroundStyle(isMissed ? .orange : .blue)
                 .font(.title3)
 
             VStack(alignment: .leading, spacing: 2) {

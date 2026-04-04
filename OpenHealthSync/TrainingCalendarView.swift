@@ -1,28 +1,43 @@
 import SwiftUI
 import WorkoutKit
+import HealthKit
 
 struct TrainingCalendarView: View {
     @ObservedObject var scheduleManager: WorkoutScheduleManager
     @ObservedObject var workoutManager: WorkoutManager
+    @ObservedObject var missedWorkoutDetector: MissedWorkoutDetector
     let scheduledWorkouts: [ScheduledWorkoutPlan]
     @Binding var selectedDate: Date?
 
     @State private var resolvedSelectedDate: Date = Date()
 
-    private let calendar = Calendar.current
+    @AppStorage("weekStartsOnMonday") private var weekStartsOnMonday: Bool = true
+
+    private var calendar: Calendar {
+        var cal = Calendar.current
+        cal.firstWeekday = weekStartsOnMonday ? 2 : 1
+        return cal
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                // Refresh card
-                VStack(alignment: .leading, spacing: 8) {
-                    RefreshWorkoutsContent(scheduleManager: scheduleManager)
+                // Missed workout banner
+                if !missedWorkoutDetector.missedWorkouts.isEmpty {
+                    MissedWorkoutBanner(detector: missedWorkoutDetector)
+                        .padding(.bottom, 8)
                 }
-                .padding()
-                .background(Color.secondary.opacity(0.05))
-                .cornerRadius(12)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+
+                // Plan overview
+                if let plan = scheduleManager.activePlan {
+                    PlanOverviewCard(
+                        plan: plan,
+                        planWorkouts: scheduleManager.planWorkouts,
+                        scheduledWorkouts: scheduledWorkouts
+                    )
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
 
                 // Week strip
                 WeekStripView(
@@ -35,7 +50,8 @@ struct TrainingCalendarView: View {
                 DayDetailSection(
                     date: resolvedSelectedDate,
                     items: selectedDayItems,
-                    workoutManager: workoutManager
+                    workoutManager: workoutManager,
+                    missedWorkoutDetector: missedWorkoutDetector
                 )
                 .padding(.top, 4)
             }
@@ -55,12 +71,24 @@ struct TrainingCalendarView: View {
     private var timelineItemsByDay: [DateComponents: [TrainingTimelineItem]] {
         var dict: [DateComponents: [TrainingTimelineItem]] = [:]
 
+        // Collect completed plan IDs so we can deduplicate past workouts
+        let completedPlanIds = Set(
+            scheduledWorkouts
+                .filter { $0.complete }
+                .map { $0.plan.id }
+        )
+
         for plan in scheduledWorkouts {
             let item = TrainingTimelineItem.scheduledPlan(plan)
             dict[item.dayComponents, default: []].append(item)
         }
 
         for summary in workoutManager.allWorkouts {
+            // Skip past workouts that match a completed scheduled plan —
+            // the plan row already shows the completion status
+            if matchesCompletedPlan(summary, completedPlanIds: completedPlanIds) {
+                continue
+            }
             let item = TrainingTimelineItem.pastWorkout(summary)
             dict[item.dayComponents, default: []].append(item)
         }
@@ -70,6 +98,23 @@ struct TrainingCalendarView: View {
         }
 
         return dict
+    }
+
+    /// Check if a past workout corresponds to a completed scheduled plan.
+    private func matchesCompletedPlan(_ summary: WorkoutSummary, completedPlanIds: Set<UUID>) -> Bool {
+        guard !completedPlanIds.isEmpty else { return false }
+
+        // Match by time proximity: if a past workout starts within ±1 hour
+        // of a completed plan's scheduled date, it's the same workout
+        let oneHour: TimeInterval = 3600
+        for plan in scheduledWorkouts where plan.complete {
+            guard let scheduledDate = calendar.date(from: plan.date) else { continue }
+            let timeDiff = abs(summary.startDate.timeIntervalSince(scheduledDate))
+            if timeDiff <= oneHour {
+                return true
+            }
+        }
+        return false
     }
 
     private var selectedDayItems: [TrainingTimelineItem] {
@@ -84,6 +129,9 @@ private struct DayDetailSection: View {
     let date: Date
     let items: [TrainingTimelineItem]
     @ObservedObject var workoutManager: WorkoutManager
+    @ObservedObject var missedWorkoutDetector: MissedWorkoutDetector
+
+    @State private var feedbackWorkout: MissedWorkoutInfo?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -105,30 +153,121 @@ private struct DayDetailSection: View {
                 }
             }
         }
+        .sheet(item: $feedbackWorkout) { workout in
+            MissedWorkoutFeedbackFlow(
+                missedWorkouts: [workout],
+                detector: missedWorkoutDetector
+            )
+        }
+    }
+
+    private var startOfToday: Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
+    private func isPastDue(_ plan: ScheduledWorkoutPlan) -> Bool {
+        guard !plan.complete else { return false }
+        let scheduledDate = Calendar.current.date(from: plan.date) ?? .distantFuture
+        return scheduledDate < startOfToday
+    }
+
+    /// Find the matching HKWorkout summary for a completed plan workout.
+    private func matchedWorkout(for plan: ScheduledWorkoutPlan) -> WorkoutSummary? {
+        guard plan.complete else { return nil }
+        guard let scheduledDate = Calendar.current.date(from: plan.date) else { return nil }
+        let oneHour: TimeInterval = 3600
+
+        return workoutManager.allWorkouts
+            .filter { abs($0.startDate.timeIntervalSince(scheduledDate)) <= oneHour }
+            .min(by: { abs($0.startDate.timeIntervalSince(scheduledDate)) < abs($1.startDate.timeIntervalSince(scheduledDate)) })
     }
 
     @ViewBuilder
     private func timelineItemRow(_ item: TrainingTimelineItem) -> some View {
         switch item {
         case .scheduledPlan(let plan):
-            NavigationLink {
-                ScheduledWorkoutDetailView(scheduled: plan)
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ScheduledWorkoutRow(scheduled: plan)
-                        workoutStructureHint(plan)
+            if isPastDue(plan) {
+                // Missed workout — tap opens feedback sheet
+                let missedInfo = missedWorkoutDetector.missedInfo(for: plan.plan.id) ?? MissedWorkoutInfo(
+                    id: plan.plan.id,
+                    displayName: workoutDisplayName(for: plan),
+                    scheduledDate: Calendar.current.date(from: plan.date) ?? Date()
+                )
+                Button {
+                    feedbackWorkout = missedInfo
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ScheduledWorkoutRow(scheduled: plan, isMissed: true)
+                            workoutStructureHint(plan)
+                        }
+                        Spacer()
+                        Text("Check in")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
                     }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    .padding()
+                    .background(Color.orange.opacity(0.06))
+                    .cornerRadius(10)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.orange.opacity(0.2), lineWidth: 1)
+                    }
                 }
-                .padding()
-                .background(Color.secondary.opacity(0.05))
-                .cornerRadius(10)
+                .buttonStyle(.plain)
+            } else if plan.complete {
+                // Completed scheduled workout — show actual metrics if available
+                let matched = matchedWorkout(for: plan)
+                NavigationLink {
+                    if let summary = matched {
+                        WorkoutDetailView(
+                            summary: summary,
+                            workoutManager: workoutManager
+                        )
+                    } else {
+                        ScheduledWorkoutDetailView(scheduled: plan)
+                    }
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ScheduledWorkoutRow(scheduled: plan)
+                            if let summary = matched {
+                                completedWorkoutMetrics(summary)
+                            } else {
+                                workoutStructureHint(plan)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding()
+                    .background(Color.green.opacity(0.15))
+                    .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Upcoming scheduled workout — navigate to detail
+                NavigationLink {
+                    ScheduledWorkoutDetailView(scheduled: plan)
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ScheduledWorkoutRow(scheduled: plan)
+                            workoutStructureHint(plan)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding()
+                    .background(Color.secondary.opacity(0.05))
+                    .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         case .pastWorkout(let summary):
             NavigationLink {
                 WorkoutDetailView(
@@ -154,6 +293,23 @@ private struct DayDetailSection: View {
                 .cornerRadius(10)
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Workout Display Name
+
+    private func workoutDisplayName(for scheduled: ScheduledWorkoutPlan) -> String {
+        switch scheduled.plan.workout {
+        case .custom(let custom):
+            return custom.displayName ?? "Custom Workout"
+        case .goal(let goal):
+            return "Goal: \(goal.activity.displayName)"
+        case .pacer(let pacer):
+            return "Pacer: \(pacer.activity.displayName)"
+        case .swimBikeRun:
+            return "Swim-Bike-Run"
+        @unknown default:
+            return "Workout"
         }
     }
 
@@ -190,6 +346,48 @@ private struct DayDetailSection: View {
         }
         if custom.cooldown != nil { parts.append("Cooldown") }
         return parts
+    }
+
+    // MARK: - Completed Plan Metrics
+
+    @ViewBuilder
+    private func completedWorkoutMetrics(_ summary: WorkoutSummary) -> some View {
+        HStack(spacing: 12) {
+            if let distance = summary.distance, distance > 0 {
+                Label(formatDistance(distance), systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Label(formatDuration(summary.duration), systemImage: "timer")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let distance = summary.distance, distance > 0 {
+                Label(formatPace(duration: summary.duration, distance: distance), systemImage: "speedometer")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, 40)
+    }
+
+    private func formatDistance(_ meters: Double) -> String {
+        if meters >= 1000 {
+            return String(format: "%.2f km", meters / 1000)
+        }
+        return "\(Int(meters)) m"
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        if mins >= 60 {
+            let hours = mins / 60
+            let remainMins = mins % 60
+            return "\(hours)h \(remainMins)m"
+        }
+        return "\(mins):\(String(format: "%02d", secs))"
     }
 
     // MARK: - Past Workout Metrics

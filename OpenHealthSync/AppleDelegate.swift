@@ -7,6 +7,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
-        OpenWearablesHealthSDK.setBackgroundCompletionHandler(completionHandler)
+        if identifier.hasPrefix("com.openwearables") {
+            OpenWearablesHealthSDK.setBackgroundCompletionHandler(completionHandler)
+        } else {
+            completionHandler()
+        }
     }
 }
