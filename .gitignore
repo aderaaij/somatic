@@ -24,3 +24,6 @@ Pods/
 
 # Secrets — never commit
 Secrets.xcconfig
+
+# Internal docs
+PRODUCT_DIRECTIONS.md
