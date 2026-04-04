@@ -1,0 +1,4 @@
+enabledWorkflows:
+  - simulator
+  - device
+  - logging
