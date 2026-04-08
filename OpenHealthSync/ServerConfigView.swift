@@ -25,6 +25,7 @@ struct ServerConfigView: View {
     @AppStorage("healthMetricsSyncEnabled") private var healthMetricsSyncEnabled: Bool = true
     @AppStorage("openWearablesEnabled") private var openWearablesEnabled: Bool = false
     @AppStorage("weekStartsOnMonday") private var weekStartsOnMonday: Bool = true
+    @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
 
     // OpenWearables (only in settings)
     @AppStorage("serverURL") private var owServerURL: String = ""
@@ -111,6 +112,15 @@ struct ServerConfigView: View {
                 Picker("Week starts on", selection: $weekStartsOnMonday) {
                     Text("Monday").tag(true)
                     Text("Sunday").tag(false)
+                }
+
+                Picker("Appearance", selection: Binding(
+                    get: { AppearanceMode(rawValue: appearanceMode) ?? .system },
+                    set: { appearanceMode = $0.rawValue }
+                )) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
             }
 
@@ -206,6 +216,32 @@ struct ServerConfigView: View {
         }
         .pickerStyle(.inline)
         .labelsHidden()
+    }
+}
+
+// MARK: - Appearance Mode
+
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
     }
 }
 

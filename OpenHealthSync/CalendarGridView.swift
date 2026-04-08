@@ -130,8 +130,8 @@ struct WeekDayCell: View {
             }
             .frame(height: 6)
         }
-        .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
         .background {
             if isSelected {
                 RoundedRectangle(cornerRadius: 10)
@@ -141,5 +141,6 @@ struct WeekDayCell: View {
                     .stroke(Color.accentColor, lineWidth: 1.5)
             }
         }
+        .padding(.horizontal, 2)
     }
 }

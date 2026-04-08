@@ -63,8 +63,7 @@ struct MissedWorkoutBanner: View {
                 .controlSize(.small)
             }
             .padding()
-            .background(Color.orange.opacity(0.08))
-            .cornerRadius(12)
+            .cardStyle(tint: .orange)
             .padding(.horizontal)
             .sheet(isPresented: $showFeedbackSheet) {
                 MissedWorkoutFeedbackFlow(

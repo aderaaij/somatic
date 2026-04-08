@@ -49,6 +49,14 @@ enum MissedWorkoutAction: String, Codable, CaseIterable {
     case move
     case adjust
     case skip
+
+    var label: String {
+        switch self {
+        case .move: return "Rescheduled"
+        case .adjust: return "Adjusting plan"
+        case .skip: return "Skipped"
+        }
+    }
 }
 
 // MARK: - SwiftData Model

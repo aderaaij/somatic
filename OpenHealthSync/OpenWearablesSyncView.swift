@@ -64,8 +64,7 @@ struct OpenWearablesSyncView: View {
         }
         .padding()
         .frame(maxWidth: .infinity)
-        .background(Color.secondary.opacity(0.1))
-        .cornerRadius(12)
+        .cardStyle()
     }
 
     private var statusColor: Color {
@@ -96,8 +95,7 @@ struct OpenWearablesSyncView: View {
                     .foregroundStyle(.secondary)
             }
             .padding()
-            .background(Color.secondary.opacity(0.05))
-            .cornerRadius(12)
+            .cardStyle()
         }
     }
 
@@ -150,8 +148,7 @@ struct OpenWearablesSyncView: View {
                 .foregroundStyle(.secondary)
             }
             .padding()
-            .background(Color.secondary.opacity(0.05))
-            .cornerRadius(12)
+            .cardStyle()
         }
     }
 

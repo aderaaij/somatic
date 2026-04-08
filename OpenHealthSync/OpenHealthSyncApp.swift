@@ -26,6 +26,7 @@ struct SomaticApp: App {
     @AppStorage("openWearablesEnabled") private var openWearablesEnabled: Bool = false
     @AppStorage("healthMetricsSyncEnabled") private var healthMetricsSyncEnabled: Bool = true
     @AppStorage("serverURL") private var owServerURL: String = ""
+    @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -59,6 +60,7 @@ struct SomaticApp: App {
 
     var body: some Scene {
         WindowGroup {
+            Group {
             if trainingAPIBaseURL.isEmpty {
                 NavigationStack {
                     ServerConfigView(mode: .onboarding) { baseURL, apiKey in
@@ -126,6 +128,8 @@ struct SomaticApp: App {
                     }
                 }
             }
+            }
+            .preferredColorScheme((AppearanceMode(rawValue: appearanceMode) ?? .system).colorScheme)
         }
         .modelContainer(for: WorkoutFeedback.self)
     }

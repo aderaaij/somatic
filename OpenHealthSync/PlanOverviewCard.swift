@@ -93,8 +93,7 @@ struct PlanOverviewCard: View {
             }
         }
         .padding()
-        .background(Color.secondary.opacity(0.05))
-        .cornerRadius(12)
+        .cardStyle()
     }
 
     // MARK: - Phase Pills

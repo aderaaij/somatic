@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import WorkoutKit
 import HealthKit
 
@@ -36,7 +37,7 @@ struct TrainingCalendarView: View {
                         scheduledWorkouts: scheduledWorkouts
                     )
                     .padding(.horizontal)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 16)
                 }
 
                 // Week strip
@@ -44,7 +45,6 @@ struct TrainingCalendarView: View {
                     timelineItems: timelineItemsByDay,
                     selectedDate: $resolvedSelectedDate
                 )
-                .padding(.bottom, 8)
 
                 // Selected day's workouts
                 DayDetailSection(
@@ -131,27 +131,34 @@ private struct DayDetailSection: View {
     @ObservedObject var workoutManager: WorkoutManager
     @ObservedObject var missedWorkoutDetector: MissedWorkoutDetector
 
+    @Environment(\.modelContext) private var modelContext
     @State private var feedbackWorkout: MissedWorkoutInfo?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(date, format: .dateTime.weekday(.wide).month(.abbreviated).day())
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
-
-            if items.isEmpty {
-                Text("No workouts")
-                    .font(.subheadline)
-                    .foregroundStyle(.tertiary)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(date, format: .dateTime.weekday(.wide).month(.abbreviated).day())
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal)
-            } else {
-                ForEach(items) { item in
-                    timelineItemRow(item)
+
+                if items.isEmpty {
+                    Text("No workouts")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
                         .padding(.horizontal)
-                        .padding(.vertical, 4)
+                } else {
+                    ForEach(items) { item in
+                        timelineItemRow(item)
+                            .padding(.horizontal)
+                            .padding(.vertical, 4)
+                    }
                 }
             }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardStyle()
+            .padding(.horizontal)
         }
         .sheet(item: $feedbackWorkout) { workout in
             MissedWorkoutFeedbackFlow(
@@ -171,6 +178,12 @@ private struct DayDetailSection: View {
         return scheduledDate < startOfToday
     }
 
+    private func existingFeedback(for workoutId: UUID) -> WorkoutFeedback? {
+        let descriptor = FetchDescriptor<WorkoutFeedback>()
+        guard let allFeedback = try? modelContext.fetch(descriptor) else { return nil }
+        return allFeedback.first { $0.workoutId == workoutId && !$0.dismissed }
+    }
+
     /// Find the matching HKWorkout summary for a completed plan workout.
     private func matchedWorkout(for plan: ScheduledWorkoutPlan) -> WorkoutSummary? {
         guard plan.complete else { return nil }
@@ -187,34 +200,50 @@ private struct DayDetailSection: View {
         switch item {
         case .scheduledPlan(let plan):
             if isPastDue(plan) {
-                // Missed workout — tap opens feedback sheet
-                let missedInfo = missedWorkoutDetector.missedInfo(for: plan.plan.id) ?? MissedWorkoutInfo(
-                    id: plan.plan.id,
-                    displayName: workoutDisplayName(for: plan),
-                    scheduledDate: Calendar.current.date(from: plan.date) ?? Date()
-                )
-                Button {
-                    feedbackWorkout = missedInfo
-                } label: {
+                if let feedback = existingFeedback(for: plan.plan.id) {
+                    // Already checked in — show reason and action
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             ScheduledWorkoutRow(scheduled: plan, isMissed: true)
                             workoutStructureHint(plan)
                         }
                         Spacer()
-                        Text("Check in")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.orange)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(feedback.reason.emoji) \(feedback.reason.label)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(feedback.action.label)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.orange)
+                        }
                     }
                     .padding()
-                    .background(Color.orange.opacity(0.06))
-                    .cornerRadius(10)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.orange.opacity(0.2), lineWidth: 1)
+                    .cardStyle(tint: .orange)
+                } else {
+                    // No feedback yet — tap opens feedback sheet
+                    let missedInfo = missedWorkoutDetector.missedInfo(for: plan.plan.id) ?? MissedWorkoutInfo(
+                        id: plan.plan.id,
+                        displayName: workoutDisplayName(for: plan),
+                        scheduledDate: Calendar.current.date(from: plan.date) ?? Date()
+                    )
+                    Button {
+                        feedbackWorkout = missedInfo
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ScheduledWorkoutRow(scheduled: plan, isMissed: true)
+                                workoutStructureHint(plan)
+                            }
+                            Spacer()
+                            Text("Check in")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.orange)
+                        }
+                        .padding()
+                        .cardStyle(tint: .orange)
                     }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             } else if plan.complete {
                 // Completed scheduled workout — show actual metrics if available
                 let matched = matchedWorkout(for: plan)
@@ -243,8 +272,7 @@ private struct DayDetailSection: View {
                             .foregroundStyle(.tertiary)
                     }
                     .padding()
-                    .background(Color.green.opacity(0.15))
-                    .cornerRadius(10)
+                    .cardStyle(tint: .green)
                 }
                 .buttonStyle(.plain)
             } else {
@@ -263,8 +291,7 @@ private struct DayDetailSection: View {
                             .foregroundStyle(.tertiary)
                     }
                     .padding()
-                    .background(Color.secondary.opacity(0.05))
-                    .cornerRadius(10)
+                    .cardStyle()
                 }
                 .buttonStyle(.plain)
             }
@@ -289,8 +316,7 @@ private struct DayDetailSection: View {
                         .foregroundStyle(.tertiary)
                 }
                 .padding()
-                .background(Color.secondary.opacity(0.05))
-                .cornerRadius(10)
+                .cardStyle()
             }
             .buttonStyle(.plain)
         }
