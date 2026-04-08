@@ -47,6 +47,7 @@ class WorkoutScheduleManager: ObservableObject {
     @Published var authorizationState: WorkoutScheduler.AuthorizationState = .notDetermined
     @Published var activePlan: TrainingPlan?
     @Published var planWorkouts: [PlanWorkout] = []
+    @Published var isLoadingPlan = true
 
     private let apiClient: WorkoutAPIClient
 
@@ -107,6 +108,8 @@ class WorkoutScheduleManager: ObservableObject {
     // MARK: - Active Plan
 
     func loadActivePlan() async {
+        isLoadingPlan = true
+        defer { isLoadingPlan = false }
         do {
             let plan = try await apiClient.fetchActivePlan()
             activePlan = plan

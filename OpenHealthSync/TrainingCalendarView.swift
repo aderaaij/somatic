@@ -23,6 +23,7 @@ struct TrainingCalendarView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
+
                 // Missed workout banner
                 if !missedWorkoutDetector.missedWorkouts.isEmpty {
                     MissedWorkoutBanner(detector: missedWorkoutDetector)
@@ -30,15 +31,22 @@ struct TrainingCalendarView: View {
                 }
 
                 // Plan overview
-                if let plan = scheduleManager.activePlan {
-                    PlanOverviewCard(
-                        plan: plan,
-                        planWorkouts: scheduleManager.planWorkouts,
-                        scheduledWorkouts: scheduledWorkouts
-                    )
-                    .padding(.horizontal)
-                    .padding(.bottom, 16)
+                Group {
+                    if let plan = scheduleManager.activePlan {
+                        PlanOverviewCard(
+                            plan: plan,
+                            planWorkouts: scheduleManager.planWorkouts,
+                            scheduledWorkouts: scheduledWorkouts
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    } else if scheduleManager.isLoadingPlan {
+                        PlanLoadingPlaceholder()
+                            .transition(.opacity)
+                    }
                 }
+                .animation(.easeInOut(duration: 0.3), value: scheduleManager.activePlan != nil)
+                .padding(.horizontal)
+                .padding(.bottom, 16)
 
                 // Week strip
                 WeekStripView(
@@ -55,8 +63,10 @@ struct TrainingCalendarView: View {
                 )
                 .padding(.top, 4)
             }
-            .padding(.vertical)
+            .padding(.bottom)
         }
+        .contentMargins(.top, 0)
+        .background(Color(.systemGroupedBackground))
         .onAppear {
             resolvedSelectedDate = selectedDate ?? Date()
             workoutManager.fetchAllRecentWorkouts()
@@ -218,7 +228,7 @@ private struct DayDetailSection: View {
                         }
                     }
                     .padding()
-                    .cardStyle(tint: .orange)
+                    .innerCardStyle(tint: .orange)
                 } else {
                     // No feedback yet — tap opens feedback sheet
                     let missedInfo = missedWorkoutDetector.missedInfo(for: plan.plan.id) ?? MissedWorkoutInfo(
@@ -240,7 +250,7 @@ private struct DayDetailSection: View {
                                 .foregroundStyle(.orange)
                         }
                         .padding()
-                        .cardStyle(tint: .orange)
+                        .innerCardStyle(tint: .orange)
                     }
                     .buttonStyle(.plain)
                 }
@@ -272,7 +282,7 @@ private struct DayDetailSection: View {
                             .foregroundStyle(.tertiary)
                     }
                     .padding()
-                    .cardStyle(tint: .green)
+                    .innerCardStyle(tint: .green)
                 }
                 .buttonStyle(.plain)
             } else {
@@ -291,7 +301,7 @@ private struct DayDetailSection: View {
                             .foregroundStyle(.tertiary)
                     }
                     .padding()
-                    .cardStyle()
+                    .innerCardStyle()
                 }
                 .buttonStyle(.plain)
             }
@@ -316,7 +326,7 @@ private struct DayDetailSection: View {
                         .foregroundStyle(.tertiary)
                 }
                 .padding()
-                .cardStyle()
+                .innerCardStyle()
             }
             .buttonStyle(.plain)
         }

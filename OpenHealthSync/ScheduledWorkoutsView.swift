@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import SwiftData
 import WorkoutKit
 import HealthKit
 
@@ -18,6 +19,7 @@ struct TrainingTabView: View {
     @State private var viewMode: ViewMode = .timeline
     @State private var selectedDate: Date?
     @State private var feedbackWorkout: MissedWorkoutInfo?
+    @State private var pastWorkoutsLimit = 10
 
     enum ViewMode: String, CaseIterable {
         case timeline, list
@@ -106,13 +108,35 @@ struct TrainingTabView: View {
                             )
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+                    } else if scheduleManager.isLoadingPlan {
+                        Section {
+                            PlanLoadingPlaceholder()
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                         }
                     }
 
                     if !missedWorkoutsInList.isEmpty {
                         Section("Missed") {
                             ForEach(missedWorkoutsInList, id: \.self) { scheduled in
-                                if let missedInfo = missedWorkoutDetector.missedInfo(for: scheduled.plan.id) {
+                                if let feedback = existingFeedback(for: scheduled.plan.id) {
+                                    // Already checked in — show reason and action
+                                    HStack {
+                                        ScheduledWorkoutRow(scheduled: scheduled, isMissed: true)
+                                        Spacer()
+                                        VStack(alignment: .trailing, spacing: 2) {
+                                            Text("\(feedback.reason.emoji) \(feedback.reason.label)")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(feedback.action.label)
+                                                .font(.caption.weight(.medium))
+                                                .foregroundStyle(.orange)
+                                        }
+                                    }
+                                } else if let missedInfo = missedWorkoutDetector.missedInfo(for: scheduled.plan.id) {
                                     Button {
                                         feedbackWorkout = missedInfo
                                     } label: {
@@ -120,7 +144,6 @@ struct TrainingTabView: View {
                                     }
                                 } else {
                                     Button {
-                                        // Past-due but not yet detected as missed — treat as missed
                                         feedbackWorkout = MissedWorkoutInfo(
                                             id: scheduled.plan.id,
                                             displayName: workoutDisplayName(for: scheduled),
@@ -160,7 +183,7 @@ struct TrainingTabView: View {
 
                     if !pastWorkouts.isEmpty {
                         Section("Past Workouts") {
-                            ForEach(pastWorkouts) { summary in
+                            ForEach(pastWorkouts.prefix(pastWorkoutsLimit)) { summary in
                                 NavigationLink {
                                     WorkoutDetailView(
                                         summary: summary,
@@ -171,6 +194,15 @@ struct TrainingTabView: View {
                                         summary: summary,
                                         status: workoutManager.extractionStatuses[summary.id]
                                     )
+                                }
+                            }
+                            if pastWorkouts.count > pastWorkoutsLimit {
+                                Button {
+                                    pastWorkoutsLimit += 10
+                                } label: {
+                                    Text("Show More (\(pastWorkouts.count - pastWorkoutsLimit) remaining)")
+                                        .font(.subheadline)
+                                        .frame(maxWidth: .infinity)
                                 }
                             }
                         }
@@ -225,6 +257,12 @@ struct TrainingTabView: View {
                 )
             }
         }
+    }
+
+    private func existingFeedback(for workoutId: UUID) -> WorkoutFeedback? {
+        let descriptor = FetchDescriptor<WorkoutFeedback>()
+        guard let allFeedback = try? modelContext.fetch(descriptor) else { return nil }
+        return allFeedback.first { $0.workoutId == workoutId && !$0.dismissed }
     }
 
     private func workoutDisplayName(for scheduled: ScheduledWorkoutPlan) -> String {

@@ -213,3 +213,20 @@ struct PlanOverviewCard: View {
         }
     }
 }
+
+// MARK: - Loading Placeholder
+
+struct PlanLoadingPlaceholder: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Loading training plan…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .cardStyle()
+    }
+}
