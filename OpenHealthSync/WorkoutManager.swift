@@ -182,6 +182,13 @@ class WorkoutManager: ObservableObject {
             extractionStatuses[workoutID] = .sending
             try await apiClient.send(data: jsonData)
 
+            // If this HK workout fulfilled a prescribed plan workout, mark it completed.
+            // Server stamps completed_at idempotently, so the inventory-sync safety net
+            // won't clobber this accurate timestamp on a later call.
+            if let planId {
+                try? await apiClient.markPlanWorkoutCompleted(id: planId)
+            }
+
             markAsSent(workoutID)
             extractionStatuses[workoutID] = .sent(Date())
         } catch {
@@ -191,34 +198,41 @@ class WorkoutManager: ObservableObject {
 
     // MARK: - Plan Workout Matching
 
-    /// Matches a completed HKWorkout to a scheduled plan workout by date proximity and activity type.
+    /// Matches a HealthKit workout to a prescribed plan_workout (= workout_queue row)
+    /// so `/api/workouts` is posted with a populated `plan_workout_id` FK.
+    ///
+    /// Matches against `scheduleManager.planWorkouts` (API objects) rather than the
+    /// WorkoutKit `scheduledWorkouts` list — the old path filtered by
+    /// `scheduled.complete == true`, which stopped flipping reliably after W1.
+    ///
+    /// Rule: same activity type + scheduled within ±6h of the HK start date.
+    /// Exactly one match returns that id; zero or multiple return nil (freestyle /
+    /// ambiguous). For legacy items where `scheduledDate` is nil, falls back to the
+    /// iOS-side `scheduledDateMap`.
     private func findPlanWorkoutId(for workout: HKWorkout) -> UUID? {
-        guard let scheduledWorkouts = scheduleManager?.scheduledWorkouts else { return nil }
+        guard let scheduleManager else { return nil }
 
-        let calendar = Calendar.current
-        let oneHour: TimeInterval = 3600
+        let planWorkouts = scheduleManager.planWorkouts
+        guard !planWorkouts.isEmpty else { return nil }
 
-        // Find completed plan workouts that match by activity type and time
-        let candidates = scheduledWorkouts.compactMap { scheduled -> (UUID, TimeInterval)? in
-            guard scheduled.complete else { return nil }
+        let activityKey = Self.activityTypeName(workout.workoutActivityType)
+        let sixHours: TimeInterval = 6 * 3600
 
-            // Resolve scheduled date from DateComponents
-            guard let scheduledDate = calendar.date(from: scheduled.date) else { return nil }
+        let candidates: [(UUID, TimeInterval)] = planWorkouts.compactMap { pw in
+            guard pw.activityType == activityKey else { return nil }
 
-            // Check time proximity (±1 hour)
-            let timeDiff = abs(workout.startDate.timeIntervalSince(scheduledDate))
-            guard timeDiff <= oneHour else { return nil }
+            let date = pw.scheduledDate ?? scheduleManager.scheduledDate(for: pw.id)
+            guard let date else { return nil }
 
-            return (scheduled.plan.id, timeDiff)
+            let timeDiff = abs(workout.startDate.timeIntervalSince(date))
+            guard timeDiff <= sixHours else { return nil }
+
+            return (pw.id, timeDiff)
         }
 
-        guard !candidates.isEmpty else { return nil }
-
-        // If single match, return it
-        if candidates.count == 1 { return candidates[0].0 }
-
-        // Multiple candidates — pick closest by time
-        return candidates.min(by: { $0.1 < $1.1 })?.0
+        // Exactly-one-match rule: ambiguity → leave null so the server doesn't get a wrong FK.
+        guard candidates.count == 1 else { return nil }
+        return candidates[0].0
     }
 
     // MARK: - Auto-Extract New Workouts

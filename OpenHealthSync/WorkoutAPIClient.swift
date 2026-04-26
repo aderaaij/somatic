@@ -226,7 +226,33 @@ actor WorkoutAPIClient {
             throw WorkoutAPIError.serverError(httpResponse.statusCode)
         }
 
-        return try JSONDecoder().decode([PlanWorkout].self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([PlanWorkout].self, from: data)
+    }
+
+    // MARK: - Plan Workout Completion
+
+    /// Marks a queued plan workout as completed, server stamps completed_at idempotently
+    /// (only writes when currently null, so dual-write with inventory sync is safe).
+    func markPlanWorkoutCompleted(id: UUID) async throws {
+        let url = baseURL.appendingPathComponent("api/queue/\(id.uuidString)/status")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(["status": "completed"])
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw WorkoutAPIError.serverError(httpResponse.statusCode)
+        }
     }
 
     // MARK: - Queue Item Status Update

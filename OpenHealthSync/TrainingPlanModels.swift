@@ -129,11 +129,16 @@ struct PlanWorkout: Codable, Sendable, Identifiable {
     let status: String
     let planId: UUID?
     let createdAt: String?
+    /// Nil for legacy queue items inserted by the old backfill migration (pre ~2026-03-18).
+    /// For those, fall back to WorkoutScheduleManager.scheduledDate(for:) which reads
+    /// the iOS-side scheduledDateMap populated at schedule time.
+    let scheduledDate: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, status
         case activityType = "activity_type"
         case planId = "plan_id"
         case createdAt = "created_at"
+        case scheduledDate = "scheduled_date"
     }
 }

@@ -77,6 +77,14 @@ class WorkoutScheduleManager: ObservableObject {
         self.apiClient = apiClient
     }
 
+    /// Fallback source of truth for plan workouts whose API-supplied `scheduled_date`
+    /// is null (pre ~2026-03-18 legacy queue items). Reads the locally-persisted
+    /// DateComponents written at schedule time.
+    func scheduledDate(for id: UUID) -> Date? {
+        guard let components = scheduledDateMap[id] else { return nil }
+        return Calendar.current.date(from: components)
+    }
+
     // MARK: - Authorization
 
     func requestAuthorization() async {
@@ -155,9 +163,11 @@ class WorkoutScheduleManager: ObservableObject {
         do {
             try await apiClient.syncInventory(inventory)
 
-            // Update queue status to 'completed' for finished workouts
+            // Safety net: mark any locally-complete workouts as completed server-side.
+            // The primary completion signal is per-ingest in WorkoutManager.extractAndSend;
+            // the server stamps completed_at idempotently so this double-write is safe.
             for item in inventory where item.complete {
-                try? await apiClient.updateQueueItemStatus(id: item.id, status: "completed")
+                try? await apiClient.markPlanWorkoutCompleted(id: item.id)
             }
         } catch {
             print("Failed to sync workout inventory: \(error)")
