@@ -46,6 +46,12 @@ actor WorkoutExtractor {
             workout, type: HKQuantityType(.runningGroundContactTime),
             unit: .secondUnit(with: .milli)
         )
+        async let effortScore = fetchEffortScore(
+            workout, type: HKQuantityType(.workoutEffortScore)
+        )
+        async let estimatedEffortScore = fetchEffortScore(
+            workout, type: HKQuantityType(.estimatedWorkoutEffortScore)
+        )
 
         let route = try? await routePoints
         let hr = try? await heartRateData
@@ -55,6 +61,8 @@ actor WorkoutExtractor {
         let stride = try? await strideLengthData
         let vertOsc = try? await vertOscData
         let gct = try? await gctData
+        let rpe = await effortScore
+        let estRpe = await estimatedEffortScore
 
         // Compute splits from full-resolution data before downsampling
         let splits = computeSplits(
@@ -105,8 +113,33 @@ actor WorkoutExtractor {
             splits: splits?.isEmpty == true ? nil : splits,
             activities: activities?.isEmpty == true ? nil : activities,
             events: events?.isEmpty == true ? nil : events,
-            metadata: metadataDict
+            metadata: metadataDict,
+            effortScore: rpe,
+            estimatedEffortScore: estRpe
         )
+    }
+
+    // MARK: - Effort Score
+
+    /// Reads the most recent effort score sample linked to this workout via
+    /// HKWorkoutEffortRelationship. Returns nil when no rating exists (user
+    /// skipped the watchOS prompt, or for workouts predating iOS 18).
+    private func fetchEffortScore(_ workout: HKWorkout, type: HKQuantityType) async -> Double? {
+        let predicate = HKQuery.predicateForWorkoutEffortSamplesRelated(workout: workout, activity: nil)
+        return await withCheckedContinuation { continuation in
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: [sort]
+            ) { _, samples, _ in
+                let value = (samples?.first as? HKQuantitySample)?
+                    .quantity.doubleValue(for: .appleEffortScore())
+                continuation.resume(returning: value)
+            }
+            healthStore.execute(query)
+        }
     }
 
     private func nilIfEmpty(_ array: [TimeSeries]?) -> [TimeSeries]? {

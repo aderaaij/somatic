@@ -29,6 +29,10 @@ actor HealthMetricsSyncer {
         HKQuantityType(.leanBodyMass),
         HKQuantityType(.respiratoryRate),
         HKQuantityType(.oxygenSaturation),
+        // Workout effort (RPE 1–10) — read here so authorization is granted
+        // alongside other metrics; consumed by WorkoutExtractor, not this syncer.
+        HKQuantityType(.workoutEffortScore),
+        HKQuantityType(.estimatedWorkoutEffortScore),
     ]
 
     init(apiClient: WorkoutAPIClient) {

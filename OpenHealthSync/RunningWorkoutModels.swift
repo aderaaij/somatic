@@ -41,6 +41,8 @@ struct DetailedWorkout: Codable, Sendable {
     let activities: [WorkoutActivityData]?  // structured intervals / multisport segments
     let events: [WorkoutEventData]?
     let metadata: [String: String]?
+    let effortScore: Double?              // user-rated RPE 1–10 (Apple Watch post-workout)
+    let estimatedEffortScore: Double?     // system-estimated RPE 1–10
 }
 
 // MARK: - Route
