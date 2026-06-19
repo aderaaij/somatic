@@ -7,15 +7,34 @@
 
 import Foundation
 
+// MARK: - Plan Lifecycle
+
+/// Where a plan sits relative to today. Date-derived, with an explicit
+/// `archived` status from the backend taking precedence.
+enum PlanLifecycle: String, Sendable {
+    case upcoming
+    case current
+    case archived
+
+    var label: String {
+        switch self {
+        case .upcoming: return "Upcoming"
+        case .current: return "Current"
+        case .archived: return "Archived"
+        }
+    }
+}
+
 // MARK: - Training Plan
 
-struct TrainingPlan: Codable, Sendable, Identifiable {
+nonisolated struct TrainingPlan: Codable, Sendable, Identifiable {
     let id: UUID
     let name: String
     let activityType: String
     let status: String
     let startDate: String
-    let endDate: String
+    /// Nullable on the backend — plans without a defined end date are open-ended.
+    let endDate: String?
     let description: String?
     let metadata: TrainingPlanMetadata?
     let createdAt: String?
@@ -38,6 +57,7 @@ struct TrainingPlan: Codable, Sendable, Identifiable {
     }
 
     var end: Date? {
+        guard let endDate else { return nil }
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         return f.date(from: endDate)
@@ -62,6 +82,32 @@ struct TrainingPlan: Codable, Sendable, Identifiable {
         guard let week = currentWeek else { return nil }
         return metadata?.phases?.first { $0.weeks.contains(week) }
     }
+
+    /// Bucket the plan into upcoming / current / archived.
+    ///
+    /// An explicit backend status wins: `active` is the current plan (even if it
+    /// starts tomorrow) and `archived` is retired (even if its dates haven't
+    /// passed). For any other free-form status, dates decide: starting in the
+    /// future is upcoming, a passed end date is archived, otherwise current
+    /// (including open-ended plans with no end date).
+    var lifecycle: PlanLifecycle {
+        switch status.lowercased() {
+        case "active": return .current
+        case "archived": return .archived
+        default: break
+        }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+
+        if let start, today < calendar.startOfDay(for: start) {
+            return .upcoming
+        }
+        if let end, today > calendar.startOfDay(for: end) {
+            return .archived
+        }
+        return .current
+    }
 }
 
 // MARK: - Plan Metadata
@@ -81,7 +127,7 @@ struct TrainingPlanMetadata: Codable, Sendable {
 
 struct PlanGoal: Codable, Sendable {
     let type: String
-    let target: Double?
+    let target: PlanGoalTarget?
     let unit: String?
     let byWeek: Int?
     let description: String?
@@ -89,6 +135,54 @@ struct PlanGoal: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case type, target, unit, description
         case byWeek = "by_week"
+    }
+}
+
+/// A goal target is free-form on the backend: it can be numeric (e.g. `20` km)
+/// or prose (e.g. "pre-op steady pace ~6:00-6:15/km"), depending on the goal
+/// type. Decoding it as a single Swift type would fail the whole plan, so it
+/// accepts either shape.
+enum PlanGoalTarget: Codable, Sendable {
+    case number(Double)
+    case text(String)
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .text(value)
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Goal target is neither a number nor a string"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .number(let value): try container.encode(value)
+        case .text(let value): try container.encode(value)
+        }
+    }
+
+    /// Numeric value when the target is a number, else nil.
+    var doubleValue: Double? {
+        if case .number(let value) = self { return value }
+        return nil
+    }
+
+    /// Human-readable representation for display.
+    var displayString: String {
+        switch self {
+        case .number(let value):
+            return value.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(value)) : String(value)
+        case .text(let value):
+            return value
+        }
     }
 }
 
@@ -140,5 +234,21 @@ struct PlanWorkout: Codable, Sendable, Identifiable {
         case planId = "plan_id"
         case createdAt = "created_at"
         case scheduledDate = "scheduled_date"
+    }
+}
+
+// MARK: - Resilient Decoding
+
+/// Wraps a `Decodable` so a single failing element in an array doesn't fail the
+/// whole array. Used when decoding plans, whose LLM-authored metadata can drift:
+/// `JSONDecoder().decode([FailableDecodable<TrainingPlan>].self, ...)` yields
+/// `nil` for any malformed element while keeping the rest. The init never throws,
+/// so the surrounding unkeyed container still advances past the bad element.
+nonisolated struct FailableDecodable<Wrapped: Decodable>: Decodable {
+    let value: Wrapped?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        value = try? container.decode(Wrapped.self)
     }
 }

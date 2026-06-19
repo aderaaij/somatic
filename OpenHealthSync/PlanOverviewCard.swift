@@ -17,7 +17,13 @@ struct PlanOverviewCard: View {
 
     private var completedCount: Int {
         let planWorkoutIds = Set(planWorkouts.map { $0.id })
-        return scheduledWorkouts.filter { $0.complete && planWorkoutIds.contains($0.plan.id) }.count
+        // Live completion from workouts currently scheduled on the watch (active plan)…
+        let scheduledCompleted = scheduledWorkouts
+            .filter { $0.complete && planWorkoutIds.contains($0.plan.id) }.count
+        // …floored by the server-side status, which is the only signal available for
+        // plans that aren't currently scheduled on the watch (upcoming / archived).
+        let serverCompleted = planWorkouts.filter { $0.status == "completed" }.count
+        return max(scheduledCompleted, serverCompleted)
     }
 
     private var totalCount: Int {
@@ -202,12 +208,13 @@ struct PlanOverviewCard: View {
         let calendar = Calendar.current
 
         return planWorkouts.filter { workout in
-            // Match workout to inventory to get scheduled date
-            guard let scheduled = scheduledWorkouts.first(where: { $0.plan.id == workout.id }),
-                  let scheduledDate = calendar.date(from: scheduled.date) else {
-                return false
-            }
-            let days = calendar.dateComponents([.day], from: startDate, to: scheduledDate).day ?? 0
+            // Prefer the workout's own scheduled date; fall back to the matching
+            // watch-scheduled item for legacy queue items with no scheduled_date.
+            let date = workout.scheduledDate
+                ?? scheduledWorkouts.first { $0.plan.id == workout.id }
+                    .flatMap { calendar.date(from: $0.date) }
+            guard let date else { return false }
+            let days = calendar.dateComponents([.day], from: startDate, to: date).day ?? 0
             let week = max(0, days / 7)
             return phase.weeks.contains(week)
         }

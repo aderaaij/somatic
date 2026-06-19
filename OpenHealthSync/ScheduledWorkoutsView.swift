@@ -230,6 +230,13 @@ struct TrainingTabView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 120)
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                NavigationLink {
+                    PlansListView(scheduleManager: scheduleManager)
+                } label: {
+                    Image(systemName: "calendar.badge.clock")
+                }
+            }
         }
         .sheet(item: $feedbackWorkout) { workout in
             MissedWorkoutFeedbackFlow(

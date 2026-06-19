@@ -48,6 +48,8 @@ class WorkoutScheduleManager: ObservableObject {
     @Published var activePlan: TrainingPlan?
     @Published var planWorkouts: [PlanWorkout] = []
     @Published var isLoadingPlan = true
+    @Published var allPlans: [TrainingPlan] = []
+    @Published var isLoadingPlans = false
 
     private let apiClient: WorkoutAPIClient
 
@@ -129,6 +131,29 @@ class WorkoutScheduleManager: ObservableObject {
             }
         } catch {
             print("Failed to load active plan: \(error)")
+        }
+    }
+
+    /// Loads every plan so the plans browser can group them into
+    /// upcoming / current / archived.
+    func loadAllPlans() async {
+        isLoadingPlans = true
+        defer { isLoadingPlans = false }
+        do {
+            allPlans = try await apiClient.fetchAllPlans()
+        } catch {
+            print("Failed to load plans: \(error)")
+        }
+    }
+
+    /// Fetches the workouts for a specific plan on demand (used by the plan
+    /// detail view for plans other than the active one).
+    func workouts(forPlan planId: UUID) async -> [PlanWorkout] {
+        do {
+            return try await apiClient.fetchPlanWorkouts(planId: planId)
+        } catch {
+            print("Failed to load workouts for plan \(planId): \(error)")
+            return []
         }
     }
 

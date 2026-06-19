@@ -209,6 +209,31 @@ actor WorkoutAPIClient {
         return plans.first
     }
 
+    /// Fetches every plan (no status filter), newest first. Used by the plans
+    /// browser to group plans into upcoming / current / archived.
+    func fetchAllPlans() async throws -> [TrainingPlan] {
+        let url = baseURL.appendingPathComponent("api/plans")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw WorkoutAPIError.serverError(httpResponse.statusCode)
+        }
+
+        // Decode resiliently: a single plan with malformed (LLM-authored)
+        // metadata shouldn't blank the entire list.
+        let wrapped = try JSONDecoder().decode([FailableDecodable<TrainingPlan>].self, from: data)
+        return wrapped.compactMap(\.value)
+    }
+
     func fetchPlanWorkouts(planId: UUID) async throws -> [PlanWorkout] {
         let url = baseURL.appendingPathComponent("api/plans/\(planId.uuidString)/workouts")
 
