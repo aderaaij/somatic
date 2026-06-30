@@ -66,7 +66,7 @@ struct TrainingCalendarView: View {
             .padding(.bottom)
         }
         .contentMargins(.top, 0)
-        .background(Color(.systemGroupedBackground))
+        .background(LB.bg)
         .onAppear {
             resolvedSelectedDate = selectedDate ?? Date()
             workoutManager.fetchAllRecentWorkouts()
@@ -148,15 +148,26 @@ private struct DayDetailSection: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(date, format: .dateTime.weekday(.wide).month(.abbreviated).day())
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.lbDisplay(17, .semibold))
+                    .foregroundStyle(LB.textPrimary)
                     .padding(.horizontal)
 
                 if items.isEmpty {
-                    Text("No workouts")
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal)
+                    VStack(spacing: 10) {
+                        Image(systemName: "moon.zzz")
+                            .font(.system(size: 30, weight: .light))
+                            .foregroundStyle(LB.textMuted)
+                        Text("Rest & recover")
+                            .font(.lbDisplay(16, .semibold))
+                            .foregroundStyle(LB.textSecondary)
+                        Text("No scheduled workout. An easy walk is optional — let HRV climb back.")
+                            .font(.lbBody(13))
+                            .foregroundStyle(LB.textMuted)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 240)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 22)
                 } else {
                     ForEach(items) { item in
                         timelineItemRow(item)

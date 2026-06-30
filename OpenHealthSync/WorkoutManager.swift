@@ -470,6 +470,14 @@ class WorkoutManager: ObservableObject {
         }
     }
 
+    /// Re-extract a full `DetailedWorkout` (route, HR/cadence/power series, splits,
+    /// effort) from HealthKit for on-demand display. Returns `nil` if the workout
+    /// can't be found or extraction fails.
+    func getDetailedWorkout(for id: UUID) async -> DetailedWorkout? {
+        guard let workout = await fetchHKWorkout(id: id) else { return nil }
+        return try? await extractor.extractWorkout(workout)
+    }
+
     nonisolated private static func activityTypeName(_ type: HKWorkoutActivityType) -> String {
         // Returns a machine-readable identifier for the JSON payload
         activityMap[type]?.0 ?? "other(\(type.rawValue))"

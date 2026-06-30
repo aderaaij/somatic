@@ -35,7 +35,9 @@ struct ScheduledWorkoutDetailView: View {
                 }
             }
         }
+        .lbList()
         .navigationTitle(workoutName)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     // MARK: - Header
@@ -141,7 +143,7 @@ struct ScheduledWorkoutDetailView: View {
     private func purposeLabel(_ purpose: IntervalStep.Purpose) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(purpose == .work ? Color.red : Color.blue)
+                .fill(purpose == .work ? LB.red : LB.blue)
                 .frame(width: 8, height: 8)
             Text(purpose == .work ? "Work" : "Recovery")
                 .font(.subheadline.weight(.medium))
@@ -154,7 +156,7 @@ struct ScheduledWorkoutDetailView: View {
         HStack(spacing: 4) {
             Image(systemName: alertIconName(alert))
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .foregroundStyle(LB.amber)
             Text(formatAlert(alert))
                 .font(.caption)
                 .foregroundStyle(.secondary)

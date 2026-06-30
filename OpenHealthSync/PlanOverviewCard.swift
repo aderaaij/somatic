@@ -3,6 +3,7 @@
 //  OpenHealthSync
 //
 //  Created by Claude on 04/04/2026.
+//  Reskinned to the Loopback "plan hero" design.
 //
 
 import SwiftUI
@@ -17,18 +18,13 @@ struct PlanOverviewCard: View {
 
     private var completedCount: Int {
         let planWorkoutIds = Set(planWorkouts.map { $0.id })
-        // Live completion from workouts currently scheduled on the watch (active plan)…
         let scheduledCompleted = scheduledWorkouts
             .filter { $0.complete && planWorkoutIds.contains($0.plan.id) }.count
-        // …floored by the server-side status, which is the only signal available for
-        // plans that aren't currently scheduled on the watch (upcoming / archived).
         let serverCompleted = planWorkouts.filter { $0.status == "completed" }.count
         return max(scheduledCompleted, serverCompleted)
     }
 
-    private var totalCount: Int {
-        planWorkouts.count
-    }
+    private var totalCount: Int { planWorkouts.count }
 
     private var completionFraction: Double {
         guard totalCount > 0 else { return 0 }
@@ -41,65 +37,132 @@ struct PlanOverviewCard: View {
         return f
     }()
 
+    private var dateRange: String? {
+        guard let start = plan.start, let end = plan.end else { return nil }
+        return "\(Self.dateFormatter.string(from: start)) — \(Self.dateFormatter.string(from: end))".uppercased()
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Plan name and dates
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(plan.name)
-                        .font(.subheadline.weight(.semibold))
-                    if let start = plan.start, let end = plan.end {
-                        Text("\(Self.dateFormatter.string(from: start)) – \(Self.dateFormatter.string(from: end))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(completedCount)/\(totalCount)")
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                    if let currentWeek = plan.currentWeek, let totalWeeks = plan.totalWeeks {
-                        Text("Week \(currentWeek + 1)/\(totalWeeks)")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.bottom, 18)
+
+            if totalCount > 0 {
+                segmentedProgress
+                    .padding(.bottom, 16)
             }
 
-            // Progress bar
-            ProgressView(value: completionFraction)
-                .tint(.green)
+            currentPhaseRow
 
-            // Current phase
-            if let phase = plan.currentPhase {
-                HStack(spacing: 6) {
-                    Image(systemName: "figure.run")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                    Text(phase.name)
-                        .font(.caption.weight(.medium))
-                    if let notes = phase.notes {
-                        Text("· \(notes)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-
-            // Phase pills (tappable)
             if let phases = plan.metadata?.phases, !phases.isEmpty {
                 phasePills(phases)
+                    .padding(.top, 12)
             }
 
-            // Expanded phase detail
             if let phase = selectedPhase {
                 phaseDetail(phase)
             }
         }
-        .padding()
-        .cardStyle()
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: LB.rHero, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [LB.heroTop, LB.heroBottom],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(signalMotif, alignment: .center)
+                .overlay(LBCornerTicks())
+                .clipShape(RoundedRectangle(cornerRadius: LB.rHero, style: .continuous))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LB.rHero, style: .continuous)
+                .strokeBorder(LB.textPrimary.opacity(0.09), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 17, x: 0, y: 16)
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(plan.name)
+                    .font(.lbDisplay(23, .semibold))
+                    .tracking(-0.4)
+                    .foregroundStyle(LB.textPrimary)
+                if let dateRange {
+                    Text(dateRange)
+                        .font(.lbMono(12))
+                        .tracking(-0.3)
+                        .foregroundStyle(LB.textTertiary)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 5) {
+                HStack(spacing: 0) {
+                    Text("\(completedCount)").foregroundStyle(LB.accent)
+                    Text("/\(totalCount)").foregroundStyle(LB.textMuted)
+                }
+                .font(.lbMono(26, .semibold))
+                if let currentWeek = plan.currentWeek, let totalWeeks = plan.totalWeeks {
+                    Text("WEEK \(currentWeek + 1)/\(totalWeeks)")
+                        .font(.lbMono(11))
+                        .tracking(0.5)
+                        .foregroundStyle(LB.textTertiary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Segmented vital progress
+
+    private var segmentedProgress: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<totalCount, id: \.self) { i in
+                let isDone = i < completedCount
+                let isCurrent = i == completedCount && completedCount < totalCount
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(isDone ? LB.green : (isCurrent ? LB.accent : LB.trackEmpty))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 8)
+                    .shadow(color: isCurrent ? LB.accent.opacity(0.6) : .clear, radius: 5)
+            }
+        }
+    }
+
+    // MARK: - Current phase row
+
+    @ViewBuilder
+    private var currentPhaseRow: some View {
+        if let phase = plan.currentPhase {
+            HStack(spacing: 8) {
+                Image(systemName: "figure.run")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(LB.accent)
+                Text("Current phase")
+                    .font(.lbBody(13))
+                    .tracking(0.3)
+                    .foregroundStyle(LB.textTertiary)
+                Text("· \(phase.name)")
+                    .font(.lbBody(13, .semibold))
+                    .foregroundStyle(LB.textPrimary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    // MARK: - Signal motif (waveform behind the hero)
+
+    private var signalMotif: some View {
+        SignalWave()
+            .stroke(LB.accent, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+            .frame(height: 56)
+            .opacity(0.32)
+            .shadow(color: LB.accent.opacity(0.6), radius: 4)
+            .offset(y: 6)
+            .allowsHitTesting(false)
     }
 
     // MARK: - Phase Pills
@@ -108,11 +171,11 @@ struct PlanOverviewCard: View {
     private func phasePills(_ phases: [PlanPhase]) -> some View {
         let currentWeek = plan.currentWeek ?? -1
 
-        HStack(spacing: 4) {
+        FlowLayout(spacing: 7) {
             ForEach(phases) { phase in
                 let isCurrent = phase.weeks.contains(currentWeek)
-                let isCompleted = phase.weeks.allSatisfy { $0 < currentWeek }
                 let isSelected = selectedPhase?.name == phase.name
+                let highlight = isCurrent || isSelected
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -120,22 +183,18 @@ struct PlanOverviewCard: View {
                     }
                 } label: {
                     Text(phase.name)
-                        .font(.caption2.weight(isCurrent || isSelected ? .semibold : .regular))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .font(.lbBody(13, highlight ? .semibold : .medium))
+                        .foregroundStyle(highlight ? LB.accent : LB.textTertiary)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 7)
                         .background(
-                            isSelected ? Color.blue.opacity(0.25) :
-                            isCurrent ? Color.blue.opacity(0.15) :
-                            isCompleted ? Color.green.opacity(0.1) :
-                            Color.secondary.opacity(0.08)
+                            RoundedRectangle(cornerRadius: LB.rPill, style: .continuous)
+                                .fill(highlight ? LB.accentTint() : LB.surfaceTile)
                         )
-                        .foregroundStyle(
-                            isSelected ? .blue :
-                            isCurrent ? .blue :
-                            isCompleted ? .green :
-                            .secondary
+                        .overlay(
+                            RoundedRectangle(cornerRadius: LB.rPill, style: .continuous)
+                                .strokeBorder(highlight ? LB.accent.opacity(0.4) : .clear, lineWidth: 1)
                         )
-                        .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
             }
@@ -146,53 +205,53 @@ struct PlanOverviewCard: View {
 
     @ViewBuilder
     private func phaseDetail(_ phase: PlanPhase) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider()
+        VStack(alignment: .leading, spacing: 8) {
+            Rectangle().fill(LB.line).frame(height: 1).padding(.vertical, 4)
 
             HStack {
                 Text(phase.name)
-                    .font(.caption.weight(.semibold))
+                    .font(.lbBody(14, .semibold))
+                    .foregroundStyle(LB.textPrimary)
                 Spacer()
                 if phase.weeks.count == 1 {
                     Text("Week \(phase.weeks[0] + 1)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.lbMono(11))
+                        .foregroundStyle(LB.textTertiary)
                 } else if let first = phase.weeks.first, let last = phase.weeks.last {
                     Text("Weeks \(first + 1)–\(last + 1)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.lbMono(11))
+                        .foregroundStyle(LB.textTertiary)
                 }
             }
 
             if let volume = phase.volumeTargetKm {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Image(systemName: "arrow.up.right")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(LB.accent)
                     Text("Target: \(Int(volume)) km/week")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.lbBody(13))
+                        .foregroundStyle(LB.textSecondary)
                 }
             }
 
             if let notes = phase.notes {
                 Text(notes)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.lbBody(13))
+                    .foregroundStyle(LB.textSecondary)
             }
 
-            // Show workouts in this phase
             let phaseWorkouts = workoutsInPhase(phase)
             if !phaseWorkouts.isEmpty {
-                VStack(spacing: 3) {
+                VStack(spacing: 4) {
                     ForEach(phaseWorkouts) { workout in
-                        HStack(spacing: 6) {
+                        HStack(spacing: 7) {
                             Image(systemName: workout.status == "completed" ? "checkmark.circle.fill" : "circle")
-                                .font(.caption2)
-                                .foregroundStyle(workout.status == "completed" ? Color.green : Color.secondary.opacity(0.4))
+                                .font(.system(size: 12))
+                                .foregroundStyle(workout.status == "completed" ? LB.green : LB.textMuted)
                             Text(workout.title)
-                                .font(.caption)
-                                .foregroundStyle(workout.status == "completed" ? .primary : .secondary)
+                                .font(.lbBody(13))
+                                .foregroundStyle(workout.status == "completed" ? LB.textPrimary : LB.textSecondary)
                             Spacer()
                         }
                     }
@@ -200,6 +259,7 @@ struct PlanOverviewCard: View {
                 .padding(.top, 2)
             }
         }
+        .padding(.top, 8)
     }
 
     /// Find plan workouts that fall within a phase's week range.
@@ -208,8 +268,6 @@ struct PlanOverviewCard: View {
         let calendar = Calendar.current
 
         return planWorkouts.filter { workout in
-            // Prefer the workout's own scheduled date; fall back to the matching
-            // watch-scheduled item for legacy queue items with no scheduled_date.
             let date = workout.scheduledDate
                 ?? scheduledWorkouts.first { $0.plan.id == workout.id }
                     .flatMap { calendar.date(from: $0.date) }
@@ -221,6 +279,28 @@ struct PlanOverviewCard: View {
     }
 }
 
+// MARK: - Signal waveform shape
+
+struct SignalWave: Shape {
+    // From the Loopback design, on a 360×56 viewBox.
+    private static let points: [CGPoint] = [
+        CGPoint(x: 0, y: 30), CGPoint(x: 78, y: 30), CGPoint(x: 85, y: 30),
+        CGPoint(x: 90, y: 8), CGPoint(x: 97, y: 46), CGPoint(x: 103, y: 30),
+        CGPoint(x: 180, y: 30), CGPoint(x: 189, y: 30), CGPoint(x: 194, y: 10),
+        CGPoint(x: 201, y: 37), CGPoint(x: 206, y: 30), CGPoint(x: 360, y: 30)
+    ]
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let sx = rect.width / 360, sy = rect.height / 56
+        for (i, pt) in Self.points.enumerated() {
+            let cp = CGPoint(x: rect.minX + pt.x * sx, y: rect.minY + pt.y * sy)
+            if i == 0 { p.move(to: cp) } else { p.addLine(to: cp) }
+        }
+        return p
+    }
+}
+
 // MARK: - Loading Placeholder
 
 struct PlanLoadingPlaceholder: View {
@@ -228,12 +308,13 @@ struct PlanLoadingPlaceholder: View {
         HStack(spacing: 12) {
             ProgressView()
                 .controlSize(.small)
+                .tint(LB.accent)
             Text("Loading training plan…")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.lbBody(15))
+                .foregroundStyle(LB.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .cardStyle()
+        .padding(20)
+        .lbCard()
     }
 }

@@ -49,6 +49,7 @@ struct WorkoutListView: View {
                 }
             }
         }
+        .lbList()
         .navigationTitle("Workouts")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -117,25 +118,29 @@ struct WorkoutRow: View {
     var status: WorkoutExtractionStatus?
 
     var body: some View {
-        HStack {
+        HStack(spacing: 13) {
             Image(systemName: iconName)
-                .foregroundStyle(.blue)
-                .frame(width: 28)
+                .font(.system(size: 20))
+                .foregroundStyle(LB.accent)
+                .frame(width: 40, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous).fill(LB.surfaceTile)
+                )
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(summary.activityName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .font(.lbDisplay(15, .semibold))
+                    .foregroundStyle(LB.textPrimary)
 
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Text(summary.startDate, style: .date)
                     if let distance = summary.distance {
                         Text(formatDistance(distance))
                     }
                     Text(formatDuration(summary.duration))
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.lbMono(11))
+                .foregroundStyle(LB.textTertiary)
             }
 
             Spacer()
@@ -182,14 +187,15 @@ struct WorkoutRow: View {
         switch status {
         case .sent:
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(LB.green)
                 .font(.caption)
         case .extracting, .sending:
             ProgressView()
                 .controlSize(.small)
+                .tint(LB.accent)
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(LB.red)
                 .font(.caption)
         default:
             EmptyView()
@@ -219,68 +225,219 @@ struct WorkoutDetailView: View {
     let summary: WorkoutSummary
     @ObservedObject var workoutManager: WorkoutManager
 
+    @State private var detailed: DetailedWorkout?
+    @State private var loading = true
+
     private var status: WorkoutExtractionStatus {
         workoutManager.extractionStatuses[summary.id] ?? .notExtracted
     }
 
+    private let grid = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+
     var body: some View {
-        List {
-            Section("Summary") {
-                LabeledContent("Type", value: summary.activityName)
-                LabeledContent("Date", value: summary.startDate.formatted(
-                    date: .abbreviated, time: .shortened
-                ))
-                LabeledContent("Duration", value: formatDuration(summary.duration))
-                if let distance = summary.distance {
-                    LabeledContent("Distance", value: formatDistance(distance))
-                    LabeledContent("Pace", value: formatPace(
-                        duration: summary.duration, distance: distance
-                    ))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                titleHeader
+
+                if loading {
+                    loadingTile
+                } else if let d = detailed {
+                    richContent(d)
+                } else {
+                    summaryStatGrid
+                }
+
+                extractionCard
+            }
+            .padding(18)
+        }
+        .background(LB.bg)
+        .navigationTitle(summary.activityName)
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            detailed = await workoutManager.getDetailedWorkout(for: summary.id)
+            loading = false
+        }
+    }
+
+    // MARK: Header
+
+    private var titleHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(summary.activityName)
+                .font(.lbDisplay(24, .bold))
+                .tracking(-0.6)
+                .foregroundStyle(LB.textPrimary)
+            Text(metaLine)
+                .font(.lbMono(11))
+                .foregroundStyle(LB.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var loadingTile: some View {
+        HStack(spacing: 10) {
+            ProgressView().tint(LB.accent)
+            Text("Loading workout data…")
+                .font(.lbBody(14))
+                .foregroundStyle(LB.textSecondary)
+            Spacer()
+        }
+        .padding(20)
+        .lbCard()
+    }
+
+    // MARK: Rich content (from DetailedWorkout)
+
+    @ViewBuilder
+    private func richContent(_ d: DetailedWorkout) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            LazyVGrid(columns: grid, spacing: 12) {
+                if let dist = d.totalDistance, dist > 0 {
+                    LBStatTile(label: "Distance", value: String(format: "%.2f", dist / 1000), unit: "km")
+                }
+                LBStatTile(label: "Duration", value: formatDuration(d.duration))
+                if let dist = d.totalDistance, dist > 0 {
+                    LBStatTile(label: "Avg pace",
+                               value: paceValue(duration: d.duration, distance: dist),
+                               unit: "/km", accent: true)
+                }
+                if let hr = avgHR(d) {
+                    LBStatTile(label: "Avg HR", value: "\(hr)", unit: "bpm")
                 }
             }
-
-            Section("Data Extraction") {
-                extractionStatusRow
-                extractButton
+            if let effort = d.effortScore ?? d.estimatedEffortScore {
+                LBEffortGauge(score: effort, estimated: d.effortScore == nil)
             }
         }
-        .navigationTitle(summary.activityName)
+
+        if let route = d.route, route.count > 1 {
+            LBDetailSection(title: "Route", trailing: routeTrailing(d), fill: LB.surfaceSunken) {
+                LBRouteMap(route: route)
+            }
+        }
+
+        if let hr = d.heartRate, hr.count > 1 {
+            LBDetailSection(title: "Heart rate", trailing: hrTrailing(hr), fill: LB.surfaceSunken) {
+                LBHeartRateChart(series: hr)
+            }
+        }
+
+        if let splits = d.splits, !splits.isEmpty {
+            LBDetailSection(title: "1 km splits", trailing: splitsTrailing(splits)) {
+                LBSplitsList(splits: splits)
+            }
+        }
+    }
+
+    // MARK: Fallback (summary only)
+
+    private var summaryStatGrid: some View {
+        LazyVGrid(columns: grid, spacing: 12) {
+            if let distance = summary.distance, distance > 0 {
+                LBStatTile(label: "Distance", value: String(format: "%.2f", distance / 1000), unit: "km")
+            }
+            LBStatTile(label: "Duration", value: formatDuration(summary.duration))
+            if let distance = summary.distance, distance > 0 {
+                LBStatTile(label: "Avg pace",
+                           value: paceValue(duration: summary.duration, distance: distance),
+                           unit: "/km", accent: true)
+            }
+        }
+    }
+
+    // MARK: Derived strings
+
+    private var metaLine: String {
+        let kind = summary.activityName.uppercased()
+        let date = summary.startDate.formatted(.dateTime.day().month(.abbreviated).year()).uppercased()
+        let time = summary.startDate.formatted(.dateTime.hour().minute())
+        return "\(kind) · \(date) · \(time)"
+    }
+
+    private func avgHR(_ d: DetailedWorkout) -> Int? {
+        guard let hr = d.heartRate else { return nil }
+        let vals = hr.map(\.value).filter { $0 > 0 }
+        guard !vals.isEmpty else { return nil }
+        return Int((vals.reduce(0, +) / Double(vals.count)).rounded())
+    }
+
+    private func routeTrailing(_ d: DetailedWorkout) -> String {
+        guard let dist = d.totalDistance, dist > 0 else { return "GPS" }
+        return String(format: "GPS · %.2f km", dist / 1000)
+    }
+
+    private func hrTrailing(_ hr: [TimeSeries]) -> String {
+        let vals = hr.map(\.value).filter { $0 > 0 }
+        guard !vals.isEmpty else { return "" }
+        let avg = Int((vals.reduce(0, +) / Double(vals.count)).rounded())
+        let mx = Int(vals.max() ?? 0)
+        return "\(avg) avg · \(mx) max"
+    }
+
+    private func splitsTrailing(_ splits: [Split]) -> String {
+        let paces = splits.map(\.pace).filter { $0 > 0 }
+        guard !paces.isEmpty else { return "" }
+        let avg = paces.reduce(0, +) / Double(paces.count)
+        let m = Int(avg) / 60, s = Int(avg) % 60
+        return "avg \(m):\(String(format: "%02d", s))"
+    }
+
+    private var extractionCard: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Extraction")
+                    .font(.lbBody(14))
+                    .foregroundStyle(LB.textBright)
+                Spacer()
+                extractionStatusRow
+            }
+            .padding(.vertical, 14)
+
+            Rectangle().fill(LB.line).frame(height: 1)
+
+            extractButton
+                .padding(.vertical, 14)
+        }
+        .padding(.horizontal, 16)
+        .lbCard()
     }
 
     @ViewBuilder
     private var extractionStatusRow: some View {
-        HStack {
-            Text("Status")
-            Spacer()
-            switch status {
-            case .notExtracted:
-                Text("Not extracted")
-                    .foregroundStyle(.secondary)
-            case .extracting:
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Extracting...")
-                }
-            case .sending:
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Sending...")
-                }
-            case .sent(let date):
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Sent \(date.formatted(date: .abbreviated, time: .shortened))")
-                }
-                .font(.subheadline)
-            case .failed(let message):
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(.red)
-                    Text(message)
-                        .lineLimit(2)
-                }
-                .font(.subheadline)
+        switch status {
+        case .notExtracted:
+            Text("Not extracted")
+                .font(.lbMono(12))
+                .foregroundStyle(LB.textTertiary)
+        case .extracting:
+            HStack(spacing: 7) {
+                ProgressView().controlSize(.small).tint(LB.accent)
+                Text("Extracting…").font(.lbMono(12)).foregroundStyle(LB.textSecondary)
+            }
+        case .sending:
+            HStack(spacing: 7) {
+                ProgressView().controlSize(.small).tint(LB.accent)
+                Text("Sending…").font(.lbMono(12)).foregroundStyle(LB.textSecondary)
+            }
+        case .sent(let date):
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(LB.green)
+                Text("Sent \(date.formatted(date: .omitted, time: .shortened))")
+                    .font(.lbMono(12))
+                    .foregroundStyle(LB.textSecondary)
+            }
+        case .failed(let message):
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(LB.red)
+                Text(message)
+                    .font(.lbMono(11))
+                    .foregroundStyle(LB.textSecondary)
+                    .lineLimit(2)
             }
         }
     }
@@ -289,26 +446,33 @@ struct WorkoutDetailView: View {
     private var extractButton: some View {
         switch status {
         case .extracting, .sending:
-            EmptyView()
-        case .sent:
-            Button("Re-extract & Send") {
-                Task {
-                    await workoutManager.extractAndSend(workoutID: summary.id)
+            HStack {
+                Text("Working…")
+                    .font(.lbBody(14, .semibold))
+                    .foregroundStyle(LB.textMuted)
+                Spacer()
+            }
+        default:
+            Button {
+                Task { await workoutManager.extractAndSend(workoutID: summary.id) }
+            } label: {
+                HStack {
+                    Text(isSent ? "Re-extract & send" : "Extract & send")
+                        .font(.lbBody(14, .semibold))
+                        .foregroundStyle(LB.accent)
+                    Spacer()
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 16))
+                        .foregroundStyle(LB.accent)
                 }
             }
-        case .notExtracted, .failed:
-            Button("Extract & Send") {
-                Task {
-                    await workoutManager.extractAndSend(workoutID: summary.id)
-                }
-            }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
         }
     }
 
-    private func formatDistance(_ meters: Double) -> String {
-        let km = meters / 1000
-        return String(format: "%.2f km", km)
+    private var isSent: Bool {
+        if case .sent = status { return true }
+        return false
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
@@ -322,11 +486,11 @@ struct WorkoutDetailView: View {
         return "\(minutes):\(String(format: "%02d", secs))"
     }
 
-    private func formatPace(duration: TimeInterval, distance: Double) -> String {
+    private func paceValue(duration: TimeInterval, distance: Double) -> String {
         guard distance > 0 else { return "--" }
         let paceSecondsPerKm = duration / (distance / 1000)
         let minutes = Int(paceSecondsPerKm) / 60
         let seconds = Int(paceSecondsPerKm) % 60
-        return "\(minutes):\(String(format: "%02d", seconds)) /km"
+        return "\(minutes):\(String(format: "%02d", seconds))"
     }
 }

@@ -18,25 +18,27 @@ struct MissedWorkoutBanner: View {
 
     var body: some View {
         if !detector.missedWorkouts.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top) {
-                    Image(systemName: "exclamationmark.circle")
-                        .foregroundStyle(.orange)
-                        .font(.title3)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(LB.amber)
+                        .font(.system(size: 22))
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 4) {
                         if detector.missedWorkouts.count == 1, let workout = detector.missedWorkouts.first {
                             Text("You missed \(workout.displayName)")
-                                .font(.subheadline.weight(.medium))
+                                .font(.lbDisplay(15, .semibold))
+                                .foregroundStyle(LB.textPrimary)
                             Text(relativeDate(workout.scheduledDate))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.lbBody(12))
+                                .foregroundStyle(LB.textTertiary)
                         } else {
                             Text("You have \(detector.missedWorkouts.count) missed workouts")
-                                .font(.subheadline.weight(.medium))
+                                .font(.lbDisplay(15, .semibold))
+                                .foregroundStyle(LB.textPrimary)
                             Text("Want to check in?")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.lbBody(12))
+                                .foregroundStyle(LB.textTertiary)
                         }
                     }
 
@@ -46,8 +48,8 @@ struct MissedWorkoutBanner: View {
                         dismissAll()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(LB.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -56,14 +58,18 @@ struct MissedWorkoutBanner: View {
                     showFeedbackSheet = true
                 } label: {
                     Text("Check in")
-                        .font(.subheadline.weight(.medium))
+                        .font(.lbBody(14, .semibold))
+                        .foregroundStyle(LB.bg)
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(
+                            RoundedRectangle(cornerRadius: 13, style: .continuous).fill(LB.amber)
+                        )
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(.plain)
             }
-            .padding()
-            .cardStyle(tint: .orange)
+            .padding(16)
+            .cardStyle(tint: LB.amber)
             .padding(.horizontal)
             .sheet(isPresented: $showFeedbackSheet) {
                 MissedWorkoutFeedbackFlow(

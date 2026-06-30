@@ -79,8 +79,16 @@ struct MissedWorkoutFeedbackSheet: View {
                 // "Other" text field
                 if selectedReason == .other {
                     TextField("What happened?", text: $reasonNote, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
+                        .font(.lbBody(14))
+                        .foregroundStyle(LB.textPrimary)
                         .lineLimit(2...4)
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(LB.optionOff)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(LB.line, lineWidth: 1)
+                        )
                         .padding(.horizontal)
                 }
 
@@ -91,6 +99,10 @@ struct MissedWorkoutFeedbackSheet: View {
             }
             .padding(.vertical)
         }
+        .background(LB.bg)
+        .scrollContentBackground(.hidden)
+        .presentationBackground(LB.bg)
+        .presentationDragIndicator(.visible)
         .navigationTitle("Check in")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -131,25 +143,23 @@ struct MissedWorkoutFeedbackSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             if totalCount > 1 {
                 Text("\(currentIndex) of \(totalCount)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.lbMono(11))
+                    .foregroundStyle(LB.textTertiary)
                     .padding(.horizontal)
             }
 
             HStack(spacing: 12) {
-                Image(systemName: "figure.run")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                    .frame(width: 44, height: 44)
-                    .background(Color.orange.opacity(0.1))
-                    .clipShape(Circle())
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(LB.amber)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(workout.displayName)
-                        .font(.headline)
-                    Text(workout.scheduledDate, format: .dateTime.weekday(.wide).month(.abbreviated).day())
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Missed workout")
+                        .font(.lbDisplay(18, .semibold))
+                        .foregroundStyle(LB.textPrimary)
+                    Text("\(workout.displayName.uppercased()) · \(workout.scheduledDate.formatted(.dateTime.day().month(.abbreviated)).uppercased())")
+                        .font(.lbMono(11))
+                        .foregroundStyle(LB.textTertiary)
                 }
             }
             .padding(.horizontal)
@@ -159,12 +169,11 @@ struct MissedWorkoutFeedbackSheet: View {
     // MARK: - Reason Picker
 
     private var reasonSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("What happened?")
-                .font(.subheadline.weight(.medium))
+        VStack(alignment: .leading, spacing: 10) {
+            LBSectionHeader(title: "What happened?")
                 .padding(.horizontal)
 
-            FlowLayout(spacing: 8) {
+            FlowLayout(spacing: 9) {
                 ForEach(MissedWorkoutReason.allCases) { reason in
                     ReasonChip(
                         reason: reason,
@@ -186,12 +195,11 @@ struct MissedWorkoutFeedbackSheet: View {
     // MARK: - Action Section
 
     private var actionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("What would you like to do?")
-                .font(.subheadline.weight(.medium))
+        VStack(alignment: .leading, spacing: 10) {
+            LBSectionHeader(title: "Then what?")
                 .padding(.horizontal)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 9) {
                 actionButton(
                     title: "Reschedule",
                     subtitle: "Move to another day",
@@ -228,20 +236,33 @@ struct MissedWorkoutFeedbackSheet: View {
     // MARK: - Adjust Confirmation Overlay
 
     private var adjustConfirmationOverlay: some View {
+        ZStack {
+            LB.bg.opacity(0.7).ignoresSafeArea()
+            confirmationCard
+        }
+        .transition(.opacity)
+    }
+
+    private var confirmationCard: some View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(.green)
+                .foregroundStyle(LB.green)
             Text("Got it")
-                .font(.headline)
+                .font(.lbDisplay(18, .semibold))
+                .foregroundStyle(LB.textPrimary)
             Text("We'll bring this up next time you review your plan.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.lbBody(14))
+                .foregroundStyle(LB.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(32)
-        .background(.regularMaterial)
-        .cornerRadius(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous).fill(LB.surfaceAlt)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(LB.line, lineWidth: 1)
+        )
         .padding(40)
         .transition(.opacity.combined(with: .scale(scale: 0.9)))
         .onAppear {
@@ -297,29 +318,36 @@ struct MissedWorkoutFeedbackSheet: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: 13) {
                 Image(systemName: icon)
-                    .font(.body)
+                    .font(.system(size: 18))
                     .frame(width: 32)
-                    .foregroundStyle(style == .prominent ? Color.accentColor : .secondary)
+                    .foregroundStyle(style == .prominent ? LB.accent : LB.textSecondary)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.subheadline.weight(.medium))
+                        .font(.lbBody(15, .semibold))
+                        .foregroundStyle(LB.textPrimary)
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.lbBody(12))
+                        .foregroundStyle(LB.textTertiary)
                 }
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(LB.textMuted)
             }
-            .padding()
-            .background(style == .prominent ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05))
-            .cornerRadius(10)
+            .padding(15)
+            .background(
+                RoundedRectangle(cornerRadius: LB.rInner, style: .continuous)
+                    .fill(style == .prominent ? LB.accentTint(0.10) : LB.optionOff)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LB.rInner, style: .continuous)
+                    .strokeBorder(style == .prominent ? LB.accent.opacity(0.35) : LB.line, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -334,20 +362,22 @@ private struct ReasonChip: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
                 Text(reason.emoji)
                     .font(.callout)
                 Text(reason.label)
-                    .font(.subheadline)
+                    .font(.lbBody(14, .semibold))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
-            .foregroundStyle(isSelected ? Color.accentColor : .primary)
-            .cornerRadius(20)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(isSelected ? LB.accentTint() : LB.optionOff)
+            )
+            .foregroundStyle(isSelected ? LB.accent : LB.textBright)
             .overlay {
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .strokeBorder(isSelected ? LB.accent.opacity(0.45) : LB.line, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)

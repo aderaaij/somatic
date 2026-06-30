@@ -35,10 +35,12 @@ struct WeekStripView: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 10) {
             Text(displayedMonth, format: .dateTime.month(.wide).year())
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.lbBody(14, .semibold))
+                .tracking(0.4)
+                .textCase(.uppercase)
+                .foregroundStyle(LB.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal)
                 .animation(.none, value: displayedMonth)
@@ -54,7 +56,7 @@ struct WeekStripView: View {
             }
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $scrolledWeek)
-            .frame(height: 76)
+            .frame(height: 88)
         }
         .onAppear {
             scrolledWeek = startOfWeek(containing: selectedDate)
@@ -107,40 +109,42 @@ struct WeekDayCell: View {
     let dotCategories: Set<TrainingTimelineItem.DotCategory>
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             Text(date, format: .dateTime.weekday(.abbreviated))
-                .font(.caption2)
-                .foregroundStyle(isSelected ? .white : .secondary)
+                .font(.lbBody(12, .semibold))
+                .tracking(0.3)
+                .foregroundStyle(isSelected ? LB.bg.opacity(0.65) : LB.textTertiary)
 
-            Text("\(Calendar.current.component(.day, from: date))")
-                .font(.subheadline)
-                .fontWeight(isToday ? .bold : .regular)
-                .foregroundStyle(isSelected ? .white : .primary)
+            VStack(spacing: 5) {
+                Text("\(Calendar.current.component(.day, from: date))")
+                    .font(.lbDisplay(19, .semibold))
+                    .foregroundStyle(isSelected ? LB.bg : LB.textPrimary)
 
-            HStack(spacing: 3) {
-                if dotCategories.contains(.upcomingPlan) {
-                    Circle().fill(.blue).frame(width: 5, height: 5)
+                HStack(spacing: 3) {
+                    if dotCategories.contains(.upcomingPlan) {
+                        Circle().fill(LB.blue).frame(width: 5, height: 5)
+                    }
+                    if dotCategories.contains(.completedPlan) {
+                        Circle().fill(LB.green).frame(width: 5, height: 5)
+                    }
+                    if dotCategories.contains(.pastWorkout) {
+                        Circle().fill(LB.amber).frame(width: 5, height: 5)
+                    }
                 }
-                if dotCategories.contains(.completedPlan) {
-                    Circle().fill(.green).frame(width: 5, height: 5)
-                }
-                if dotCategories.contains(.pastWorkout) {
-                    Circle().fill(.orange).frame(width: 5, height: 5)
-                }
+                .frame(height: 5)
             }
-            .frame(height: 6)
+            .frame(maxWidth: .infinity)
+            .frame(height: 60)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isSelected ? LB.accent : LB.surfaceAlt)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(isToday && !isSelected ? LB.accent : LB.line,
+                                  lineWidth: isToday && !isSelected ? 1.5 : 1)
+            )
         }
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity)
-        .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.accentColor)
-            } else if isToday {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.accentColor, lineWidth: 1.5)
-            }
-        }
-        .padding(.horizontal, 2)
+        .padding(.horizontal, 4)
     }
 }

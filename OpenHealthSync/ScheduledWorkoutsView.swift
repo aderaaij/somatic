@@ -133,7 +133,7 @@ struct TrainingTabView: View {
                                                 .foregroundStyle(.secondary)
                                             Text(feedback.action.label)
                                                 .font(.caption.weight(.medium))
-                                                .foregroundStyle(.orange)
+                                                .foregroundStyle(LB.amber)
                                         }
                                     }
                                 } else if let missedInfo = missedWorkoutDetector.missedInfo(for: scheduled.plan.id) {
@@ -208,6 +208,7 @@ struct TrainingTabView: View {
                         }
                     }
                 }
+                .lbList()
             }
         }
         .navigationTitle("Training")
@@ -295,18 +296,23 @@ struct ScheduledWorkoutRow: View {
     var isMissed: Bool = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: isMissed ? "exclamationmark.circle" : "applewatch")
-                .foregroundStyle(isMissed ? .orange : .blue)
-                .font(.title3)
+        HStack(spacing: 13) {
+            Image(systemName: isMissed ? "exclamationmark.triangle.fill" : "applewatch")
+                .font(.system(size: 20))
+                .foregroundStyle(isMissed ? LB.amber : LB.blue)
+                .frame(width: 40, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous).fill(LB.surfaceTile)
+                )
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(workoutName)
-                    .font(.subheadline.weight(.medium))
+                    .font(.lbDisplay(15, .semibold))
+                    .foregroundStyle(LB.textPrimary)
                 if let dateString = formattedDate {
                     Text(dateString)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.lbMono(11))
+                        .foregroundStyle(LB.textTertiary)
                 }
             }
 
@@ -314,7 +320,7 @@ struct ScheduledWorkoutRow: View {
 
             if scheduled.complete {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(LB.green)
             }
         }
         .padding(.vertical, 2)

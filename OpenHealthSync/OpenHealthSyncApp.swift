@@ -60,78 +60,82 @@ struct SomaticApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
-            if trainingAPIBaseURL.isEmpty {
-                NavigationStack {
-                    ServerConfigView(mode: .onboarding) { baseURL, apiKey in
-                        trainingAPIBaseURL = baseURL
-                        trainingAPIKey = apiKey
-                        Task {
-                            await apiClient.configure(
-                                baseURL: URL(string: baseURL) ?? URL(string: "https://localhost")!,
-                                apiKey: apiKey
-                            )
-                        }
-                    }
-                }
-            } else {
-                MainTabView(
-                    health: health,
-                    workoutManager: workoutManager,
-                    scheduleManager: scheduleManager,
-                    missedWorkoutDetector: missedWorkoutDetector
-                )
-                .environmentObject(scheduleManager)
-                .onAppear {
-                    // Restore OpenWearables session if enabled
-                    if openWearablesEnabled && !owServerURL.isEmpty {
-                        if !health.restoreSession(host: owServerURL) {
-                            // Session restore failed — don't wipe Training API config
-                        }
-                        health.onSyncCompleted = { [weak workoutManager] in
-                            Task {
-                                await workoutManager?.extractNewWorkouts()
-                            }
-                        }
-                    }
-                    Task {
-                        await notificationManager.requestPermission()
-                    }
-                }
-                .task {
-                    await scheduleManager.requestAuthorization()
-                    await scheduleManager.loadScheduledWorkouts()
-                    await scheduleManager.autoSync()
-                    await scheduleManager.loadActivePlan()
-
-                    // Request HealthKit auth for health metrics and set up background sync
-                    if healthMetricsSyncEnabled {
-                        _ = await healthMetricsSyncer.requestAuthorization()
-                        try? await healthMetricsSyncer.syncMetrics()
-                    }
-
-                    // Register HealthKit background observers for automatic sync
-                    await backgroundSyncManager.setUp()
-                }
-                .onChange(of: scenePhase) { _, phase in
-                    if phase == .active {
-                        Task {
-                            await scheduleManager.loadScheduledWorkouts()
-                            await scheduleManager.autoSync()
-                            await detectAndNotify()
-
-                            // Sync health metrics on foreground
-                            if healthMetricsSyncEnabled {
-                                try? await healthMetricsSyncer.syncMetrics()
-                            }
-                        }
-                    }
-                }
-            }
-            }
-            .preferredColorScheme((AppearanceMode(rawValue: appearanceMode) ?? .system).colorScheme)
+            appRoot
+                .tint(LB.accent)
+                .preferredColorScheme(.dark) // Loopback is a dark-only, warm-black theme
         }
         .modelContainer(for: WorkoutFeedback.self)
+    }
+
+    @ViewBuilder
+    private var appRoot: some View {
+        if trainingAPIBaseURL.isEmpty {
+            NavigationStack {
+                ServerConfigView(mode: .onboarding) { baseURL, apiKey in
+                    trainingAPIBaseURL = baseURL
+                    trainingAPIKey = apiKey
+                    Task {
+                        await apiClient.configure(
+                            baseURL: URL(string: baseURL) ?? URL(string: "https://localhost")!,
+                            apiKey: apiKey
+                        )
+                    }
+                }
+            }
+        } else {
+            MainTabView(
+                health: health,
+                workoutManager: workoutManager,
+                scheduleManager: scheduleManager,
+                missedWorkoutDetector: missedWorkoutDetector
+            )
+            .environmentObject(scheduleManager)
+            .onAppear {
+                // Restore OpenWearables session if enabled
+                if openWearablesEnabled && !owServerURL.isEmpty {
+                    if !health.restoreSession(host: owServerURL) {
+                        // Session restore failed — don't wipe Training API config
+                    }
+                    health.onSyncCompleted = { [weak workoutManager] in
+                        Task {
+                            await workoutManager?.extractNewWorkouts()
+                        }
+                    }
+                }
+                Task {
+                    await notificationManager.requestPermission()
+                }
+            }
+            .task {
+                await scheduleManager.requestAuthorization()
+                await scheduleManager.loadScheduledWorkouts()
+                await scheduleManager.autoSync()
+                await scheduleManager.loadActivePlan()
+
+                // Request HealthKit auth for health metrics and set up background sync
+                if healthMetricsSyncEnabled {
+                    _ = await healthMetricsSyncer.requestAuthorization()
+                    try? await healthMetricsSyncer.syncMetrics()
+                }
+
+                // Register HealthKit background observers for automatic sync
+                await backgroundSyncManager.setUp()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    Task {
+                        await scheduleManager.loadScheduledWorkouts()
+                        await scheduleManager.autoSync()
+                        await detectAndNotify()
+
+                        // Sync health metrics on foreground
+                        if healthMetricsSyncEnabled {
+                            try? await healthMetricsSyncer.syncMetrics()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func detectAndNotify() async {
