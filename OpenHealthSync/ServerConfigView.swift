@@ -39,7 +39,8 @@ struct ServerConfigView: View {
                 settingsContent
             }
         }
-        .navigationTitle(mode == .onboarding ? "Welcome to Somatic" : "Settings")
+        .lbList()
+        .navigationTitle(mode == .onboarding ? "Welcome to Loopback" : "Settings")
         .onAppear {
             if mode == .settings {
                 trainingBaseURL = storedBaseURL
@@ -77,6 +78,7 @@ struct ServerConfigView: View {
                 .disabled(trainingBaseURL.isEmpty || trainingAPIKey.isEmpty)
             }
         }
+        .listRowBackground(LB.surface)
     }
 
     // MARK: - Settings
@@ -98,6 +100,7 @@ struct ServerConfigView: View {
 
             Section("Health Metrics") {
                 Toggle("Sync health data to Training API", isOn: $healthMetricsSyncEnabled)
+                    .tint(LB.green)
 
                 if healthMetricsSyncEnabled {
                     Text("Sleep, heart rate, HRV, weight, VO2Max, steps, and more are synced daily to your training server for AI coaching context.")
@@ -169,7 +172,46 @@ struct ServerConfigView: View {
                     }
                 }
             }
+
+            Section {
+                brandFooter
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+            }
         }
+        .listRowBackground(LB.surface)
+    }
+
+    // MARK: - Brand Footer
+
+    private var brandFooter: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(colors: [Color(hex: 0x241B14), Color(hex: 0x16110B)],
+                                       startPoint: .top, endPoint: .bottom)
+                    )
+                    .frame(width: 48, height: 48)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(LB.line, lineWidth: 1)
+                    )
+                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(LB.accent)
+            }
+            Text("Loopback")
+                .font(.lbDisplay(22, .semibold))
+                .tracking(-0.4)
+                .foregroundStyle(LB.textPrimary)
+            Text("SELF-HOSTED TRAINING · v1.0")
+                .font(.lbMono(10.5))
+                .tracking(1)
+                .foregroundStyle(LB.textMuted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
     }
 
     // MARK: - Shared Components
