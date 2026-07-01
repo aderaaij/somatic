@@ -288,43 +288,48 @@ struct LBHeartRateChart: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             GeometryReader { geo in
                 let pts = points(geo.size)
-                ZStack {
+                ZStack(alignment: .topLeading) {
                     ForEach(zones, id: \.name) { z in
-                        zoneBand(z, in: geo.size)
+                        zoneLayer(z, in: geo.size)
                     }
                     if pts.count > 1 {
                         areaPath(pts, height: geo.size.height)
-                            .fill(LB.accent.opacity(0.14))
+                            .fill(LB.accent.opacity(0.12))
                         linePath(pts)
                             .stroke(LB.accent,
                                     style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
                     }
                 }
             }
-            .frame(height: 130)
+            .frame(height: 132)
 
-            HStack(spacing: 14) {
+            HStack(spacing: 16) {
                 ForEach(zones, id: \.name) { z in
-                    HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 2).fill(z.color).frame(width: 8, height: 8)
-                        Text(z.name).font(.lbMono(10)).foregroundStyle(LB.textTertiary)
+                    HStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 2.5).fill(z.color).frame(width: 9, height: 9)
+                        Text(z.name).font(.lbMono(10)).foregroundStyle(LB.textSecondary)
                     }
                 }
             }
         }
     }
 
+    /// One zone's faded band with a crisp boundary line at its upper edge.
     @ViewBuilder
-    private func zoneBand(_ z: Zone, in size: CGSize) -> some View {
+    private func zoneLayer(_ z: Zone, in size: CGSize) -> some View {
         let top = clampY(mapY(z.hi * maxHR, size.height), size.height)
         let bot = clampY(mapY(z.lo * maxHR, size.height), size.height)
         Rectangle()
-            .fill(z.color.opacity(0.10))
-            .frame(height: max(0, bot - top))
+            .fill(z.color.opacity(0.16))
+            .frame(width: size.width, height: max(0, bot - top))
             .position(x: size.width / 2, y: (top + bot) / 2)
+        Rectangle()
+            .fill(z.color.opacity(0.28))
+            .frame(width: size.width, height: 1)
+            .position(x: size.width / 2, y: top)
     }
 
     private func linePath(_ pts: [CGPoint]) -> Path {
