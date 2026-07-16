@@ -26,6 +26,117 @@ actor WorkoutAPIClient {
         self.apiKey = apiKey
     }
 
+    /// Performs a lightweight authenticated request to verify the current
+    /// base URL and API key. Throws on an unreachable host or a non-2xx
+    /// (e.g. 401 for a bad key) so callers can surface a connection result.
+    func checkConnection() async throws {
+        let url = baseURL.appendingPathComponent("api/plans")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        // Intentionally does NOT post .trainingAPIUnauthorized: this verifies a
+        // candidate credential (e.g. a pasted token in Settings) and a 401 here
+        // must surface as an error, not sign the current session out.
+        guard let http = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw WorkoutAPIError.serverError(http.statusCode)
+        }
+    }
+
+    // MARK: - Authentication
+
+    /// Exchanges username + password for a bearer token. Unauthenticated by
+    /// design; maps auth-specific status codes to typed errors so the login
+    /// UI can message them (a 401 here is a bad password, not a dead session).
+    func login(baseURL: URL, username: String, password: String, deviceName: String) async throws -> LoginResponse {
+        let url = baseURL.appendingPathComponent("api/auth/login")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 20
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "username": username,
+            "password": password,
+            "deviceName": deviceName,
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let http = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+        switch http.statusCode {
+        case 200...299: break
+        case 401: throw WorkoutAPIError.invalidCredentials
+        case 429: throw WorkoutAPIError.rateLimited
+        default: throw WorkoutAPIError.serverError(http.statusCode)
+        }
+
+        return try JSONDecoder().decode(LoginResponse.self, from: data)
+    }
+
+    /// Current user + their tokens. Used to populate "Signed in as …".
+    func fetchMe() async throws -> MeResponse {
+        let url = baseURL.appendingPathComponent("api/auth/me")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw WorkoutAPIError.invalidResponse
+        }
+
+        return try JSONDecoder().decode(MeResponse.self, from: data)
+    }
+
+    /// Revokes a token by id (logout / sign out a device). 204 = revoked,
+    /// 404 = already gone — both treated as success.
+    func revokeToken(id: String) async throws {
+        let url = baseURL.appendingPathComponent("api/auth/tokens/\(id)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let http = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+        guard (200...299).contains(http.statusCode) || http.statusCode == 404 else {
+            throw WorkoutAPIError.serverError(http.statusCode)
+        }
+    }
+
+    // MARK: - Response Validation
+
+    /// Central response check for authenticated data endpoints. A 401 means the
+    /// session died (token revoked/expired, account disabled), so it posts
+    /// `.trainingAPIUnauthorized` for the app to route back to login.
+    private func validate(_ response: URLResponse, accepting extraOK: Set<Int> = []) throws {
+        guard let http = response as? HTTPURLResponse else {
+            throw WorkoutAPIError.invalidResponse
+        }
+        let code = http.statusCode
+        if (200...299).contains(code) || extraOK.contains(code) { return }
+        if code == 401 {
+            NotificationCenter.default.post(name: .trainingAPIUnauthorized, object: nil)
+            throw WorkoutAPIError.unauthorized
+        }
+        throw WorkoutAPIError.serverError(code)
+    }
+
     func send(data: Data) async throws {
         let url = baseURL.appendingPathComponent("api/workouts")
 
@@ -37,13 +148,7 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
     }
 
     // MARK: - Workout Inventory Sync
@@ -59,13 +164,7 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
     }
 
     // MARK: - Workout Queue
@@ -79,13 +178,7 @@ actor WorkoutAPIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -103,13 +196,7 @@ actor WorkoutAPIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -125,13 +212,7 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
     }
 
     // MARK: - Workout Feedback
@@ -150,14 +231,8 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
         // 201 Created or 409 Conflict (idempotent) are both acceptable
-        guard (200...299).contains(httpResponse.statusCode) || httpResponse.statusCode == 409 else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response, accepting: [409])
     }
 
     // MARK: - Health Metrics
@@ -175,13 +250,7 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
     }
 
     // MARK: - Training Plans
@@ -199,13 +268,7 @@ actor WorkoutAPIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
 
         let wrapped = try JSONDecoder().decode([FailableDecodable<TrainingPlan>].self, from: data)
         return wrapped.compactMap(\.value)
@@ -222,13 +285,7 @@ actor WorkoutAPIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
 
         // Decode resiliently: a single plan with malformed (LLM-authored)
         // metadata shouldn't blank the entire list.
@@ -255,13 +312,7 @@ actor WorkoutAPIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
 
         return try JSONDecoder().decode(CalendarResponse.self, from: data)
     }
@@ -277,13 +328,7 @@ actor WorkoutAPIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
 
         return try JSONDecoder().decode(PlanScheduleResponse.self, from: data)
     }
@@ -297,13 +342,7 @@ actor WorkoutAPIClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -325,13 +364,7 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
     }
 
     // MARK: - Queue Item Status Update
@@ -347,13 +380,7 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
     }
 
     // MARK: - Queue Item Deletion
@@ -367,20 +394,23 @@ actor WorkoutAPIClient {
 
         let (_, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WorkoutAPIError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WorkoutAPIError.serverError(httpResponse.statusCode)
-        }
+        try validate(response)
     }
+}
+
+extension Notification.Name {
+    /// Posted by the API client when an authenticated request returns 401,
+    /// signalling the session is no longer valid and the app should sign out.
+    nonisolated static let trainingAPIUnauthorized = Notification.Name("trainingAPIUnauthorized")
 }
 
 enum WorkoutAPIError: LocalizedError {
     case notConfigured
     case invalidResponse
     case serverError(Int)
+    case unauthorized
+    case invalidCredentials
+    case rateLimited
 
     var errorDescription: String? {
         switch self {
@@ -388,10 +418,48 @@ enum WorkoutAPIError: LocalizedError {
             return "Workout API client is not configured"
         case .invalidResponse:
             return "Invalid response from server"
+        case .unauthorized:
+            return "Your session has expired. Please sign in again."
+        case .invalidCredentials:
+            return "Incorrect username or password."
+        case .rateLimited:
+            return "Too many attempts. Wait a minute and try again."
         case .serverError(let code):
-            return "Server returned status \(code)"
+            switch code {
+            case 401, 403: return "Authentication failed — check your credentials"
+            case 404: return "Not found — check the server URL"
+            default: return "Server returned status \(code)"
+            }
         }
     }
+}
+
+// MARK: - Auth Models
+
+struct AuthUser: Decodable, Sendable {
+    let id: String
+    let username: String
+    let displayName: String
+    let role: String
+}
+
+struct LoginResponse: Decodable, Sendable {
+    let token: String
+    let tokenId: String
+    let user: AuthUser
+}
+
+struct AuthToken: Decodable, Sendable {
+    let id: String
+    let name: String?
+    let createdAt: String?
+    let lastUsedAt: String?
+    let expiresAt: String?
+}
+
+struct MeResponse: Decodable, Sendable {
+    let user: AuthUser
+    let tokens: [AuthToken]?
 }
 
 // MARK: - Feedback Payload

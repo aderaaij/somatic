@@ -9,6 +9,8 @@ struct MainTabView: View {
     @ObservedObject var workoutManager: WorkoutManager
     @ObservedObject var scheduleManager: WorkoutScheduleManager
     @ObservedObject var missedWorkoutDetector: MissedWorkoutDetector
+    @ObservedObject var session: SessionStore
+    let onReconnect: (String, String) async throws -> Void
 
     @AppStorage("openWearablesEnabled") private var openWearablesEnabled = false
 
@@ -34,7 +36,9 @@ struct MainTabView: View {
                             health: health,
                             workoutManager: workoutManager,
                             scheduleManager: scheduleManager,
-                            openWearablesEnabled: openWearablesEnabled
+                            session: session,
+                            openWearablesEnabled: openWearablesEnabled,
+                            onReconnect: onReconnect
                         )
                     }
                 }
@@ -97,22 +101,25 @@ private struct SettingsTabView: View {
     @ObservedObject var health: HealthManager
     @ObservedObject var workoutManager: WorkoutManager
     @ObservedObject var scheduleManager: WorkoutScheduleManager
+    @ObservedObject var session: SessionStore
     let openWearablesEnabled: Bool
-
-    @AppStorage("trainingAPIBaseURL") private var storedBaseURL: String = ""
-    @AppStorage("trainingAPIKey") private var storedAPIKey: String = ""
+    let onReconnect: (String, String) async throws -> Void
 
     var body: some View {
         ServerConfigView(
             mode: .settings,
-            onSave: { baseURL, apiKey in
-                // Config is persisted by ServerConfigView via @AppStorage
+            session: session,
+            onSave: { baseURL, token in
+                // Swap in a manually pasted token via the session, verify it,
+                // persist, and refresh the data.
+                try await onReconnect(baseURL, token)
             },
             onSignOut: {
-                storedBaseURL = ""
-                storedAPIKey = ""
-                if openWearablesEnabled {
-                    health.signOutAndReset()
+                Task {
+                    await session.signOut()
+                    if openWearablesEnabled {
+                        health.signOutAndReset()
+                    }
                 }
             },
             onRemoveAllWorkouts: {

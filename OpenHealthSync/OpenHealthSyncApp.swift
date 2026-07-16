@@ -19,9 +19,8 @@ struct SomaticApp: App {
     @StateObject private var missedWorkoutDetector = MissedWorkoutDetector()
     @StateObject private var notificationManager = NotificationManager()
     @StateObject private var backgroundSyncManager: BackgroundSyncManager
+    @StateObject private var session: SessionStore
 
-    @AppStorage("trainingAPIBaseURL") private var trainingAPIBaseURL: String = ""
-    @AppStorage("trainingAPIKey") private var trainingAPIKey: String = ""
     @AppStorage("preferredRunTime") private var preferredRunTime: String = PreferredRunTime.morning.rawValue
     @AppStorage("openWearablesEnabled") private var openWearablesEnabled: Bool = false
     @AppStorage("healthMetricsSyncEnabled") private var healthMetricsSyncEnabled: Bool = true
@@ -34,20 +33,18 @@ struct SomaticApp: App {
     private let healthMetricsSyncer: HealthMetricsSyncer
 
     init() {
-        // Read persisted config, falling back to Info.plist values
-        let info = Bundle.main.infoDictionary ?? [:]
-        let storedURL = UserDefaults.standard.string(forKey: "trainingAPIBaseURL") ?? ""
-        let storedKey = UserDefaults.standard.string(forKey: "trainingAPIKey") ?? ""
-        let baseURL = storedURL.isEmpty ? (info["WorkoutAPIBaseURL"] as? String ?? "") : storedURL
-        let apiKey = storedKey.isEmpty ? (info["WorkoutAPIKey"] as? String ?? "") : storedKey
+        // Resolve the current credentials (migrating any legacy API key into the
+        // Keychain) so the live clients are configured synchronously at launch.
+        let creds = SessionStore.resolveCredentials()
 
-        let client = WorkoutAPIClient(baseURL: baseURL, apiKey: apiKey)
+        let client = WorkoutAPIClient(baseURL: creds.serverURL, apiKey: creds.token)
         self.apiClient = client
 
         let syncer = HealthMetricsSyncer(apiClient: client)
         self.healthMetricsSyncer = syncer
 
         let wm = WorkoutManager()
+        wm.configure(serverURL: creds.serverURL, apiKey: creds.token)
         let sm = WorkoutScheduleManager(apiClient: client)
         wm.scheduleManager = sm
         _workoutManager = StateObject(wrappedValue: wm)
@@ -56,6 +53,7 @@ struct SomaticApp: App {
             workoutManager: wm,
             healthMetricsSyncer: syncer
         ))
+        _session = StateObject(wrappedValue: SessionStore(apiClient: client, workoutManager: wm))
     }
 
     var body: some Scene {
@@ -69,27 +67,28 @@ struct SomaticApp: App {
 
     @ViewBuilder
     private var appRoot: some View {
-        if trainingAPIBaseURL.isEmpty {
+        if !session.isAuthenticated {
             NavigationStack {
-                ServerConfigView(mode: .onboarding) { baseURL, apiKey in
-                    trainingAPIBaseURL = baseURL
-                    trainingAPIKey = apiKey
-                    Task {
-                        await apiClient.configure(
-                            baseURL: URL(string: baseURL) ?? URL(string: "https://localhost")!,
-                            apiKey: apiKey
-                        )
-                    }
-                }
+                LoginView(session: session)
             }
         } else {
             MainTabView(
                 health: health,
                 workoutManager: workoutManager,
                 scheduleManager: scheduleManager,
-                missedWorkoutDetector: missedWorkoutDetector
+                missedWorkoutDetector: missedWorkoutDetector,
+                session: session,
+                onReconnect: { baseURL, token in
+                    // Advanced: swap in a manually pasted token, then refresh.
+                    try await session.applyManualToken(serverURL: baseURL, token: token)
+                    await reloadAll()
+                }
             )
             .environmentObject(scheduleManager)
+            // Any /api call returning 401 signals a dead session → sign out.
+            .onReceive(NotificationCenter.default.publisher(for: .trainingAPIUnauthorized)) { _ in
+                session.handleUnauthorized()
+            }
             .onAppear {
                 // Restore OpenWearables session if enabled
                 if openWearablesEnabled && !owServerURL.isEmpty {
@@ -135,6 +134,17 @@ struct SomaticApp: App {
                     }
                 }
             }
+        }
+    }
+
+    /// Refreshes everything after a credential change so it takes effect
+    /// immediately instead of only after the next app launch.
+    private func reloadAll() async {
+        await scheduleManager.loadScheduledWorkouts()
+        await scheduleManager.autoSync()
+        await scheduleManager.loadActivePlan()
+        if healthMetricsSyncEnabled {
+            try? await healthMetricsSyncer.syncMetrics()
         }
     }
 
