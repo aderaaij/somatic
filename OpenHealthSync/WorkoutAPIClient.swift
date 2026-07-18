@@ -253,6 +253,68 @@ actor WorkoutAPIClient {
         try validate(response)
     }
 
+    // MARK: - Plan Notes (coach memory)
+
+    /// Fetches existing notes for a conversation (used to dedupe onboarding
+    /// re-runs). Query params are snake_case; response fields we decode are
+    /// camelCase, so a plain decoder is correct.
+    func fetchPlanNotes(conversationId: String, limit: Int = 50) async throws -> [PlanNote] {
+        let url = baseURL.appendingPathComponent("api/plan-notes")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "conversation_id", value: conversationId),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        try validate(response)
+
+        return try JSONDecoder().decode([PlanNote].self, from: data)
+    }
+
+    /// Creates a new plan note (201 → the created note). Request body uses
+    /// camelCase aliases (`conversationId`).
+    @discardableResult
+    func createPlanNote(_ note: PlanNoteCreate) async throws -> PlanNote {
+        let url = baseURL.appendingPathComponent("api/plan-notes")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(note)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        try validate(response)
+
+        return try JSONDecoder().decode(PlanNote.self, from: data)
+    }
+
+    /// Partial-updates an existing note by id (used to patch onboarding notes
+    /// on re-run instead of creating duplicates).
+    @discardableResult
+    func updatePlanNote(id: String, _ update: PlanNoteUpdate) async throws -> PlanNote {
+        let url = baseURL.appendingPathComponent("api/plan-notes/\(id)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(update)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        try validate(response)
+
+        return try JSONDecoder().decode(PlanNote.self, from: data)
+    }
+
     // MARK: - Training Plans
 
     /// Fetches every active plan. A running plan and a strength cycle can be

@@ -40,6 +40,9 @@ actor HealthMetricsSyncer {
         HKObjectType.workoutType(),
         HKSeriesType.workoutRoute(),
         HKQuantityType(.heartRate),
+        // Date of birth — read during onboarding to seed one age observation
+        // note for the coach. Characteristic; no share access needed.
+        HKCharacteristicType(.dateOfBirth),
     ]
 
     init(apiClient: WorkoutAPIClient) {
@@ -57,6 +60,15 @@ actor HealthMetricsSyncer {
             print("[HealthMetricsSyncer] Authorization failed: \(error)")
             return false
         }
+    }
+
+    // MARK: - Characteristics
+
+    /// The user's date of birth, if readable. Characteristic authorization
+    /// can't be queried, so we just attempt the read (after requesting auth)
+    /// and return nil on denial/absence. Used once during onboarding.
+    func dateOfBirthComponents() -> DateComponents? {
+        try? healthStore.dateOfBirthComponents()
     }
 
     // MARK: - Sync

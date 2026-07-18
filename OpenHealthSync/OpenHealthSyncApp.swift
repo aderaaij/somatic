@@ -26,6 +26,7 @@ struct LoopbackApp: App {
     @AppStorage("healthMetricsSyncEnabled") private var healthMetricsSyncEnabled: Bool = true
     @AppStorage("serverURL") private var owServerURL: String = ""
     @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -73,6 +74,19 @@ struct LoopbackApp: App {
         if !session.isAuthenticated {
             NavigationStack {
                 LoginView(session: session)
+            }
+        } else if !hasCompletedOnboarding {
+            // First run after login: seed the coach's memory. Skippable, and
+            // it owns the HealthKit prompt so the system sheet never covers
+            // the intro (the post-login `.task` HK block is gated below).
+            OnboardingView(
+                apiClient: apiClient,
+                healthMetricsSyncer: healthMetricsSyncer,
+                onFinished: { hasCompletedOnboarding = true },
+                startHealthPipeline: { await startHealthPipeline() }
+            )
+            .onReceive(NotificationCenter.default.publisher(for: .trainingAPIUnauthorized)) { _ in
+                session.handleUnauthorized()
             }
         } else {
             MainTabView(
@@ -123,14 +137,13 @@ struct LoopbackApp: App {
                 // if the server says one is finishable.
                 await scheduleManager.checkForFinishablePlan()
 
-                // Request HealthKit auth for health metrics and set up background sync
-                if healthMetricsSyncEnabled {
-                    _ = await healthMetricsSyncer.requestAuthorization()
-                    try? await healthMetricsSyncer.syncMetrics()
+                // HealthKit auth + first sync + background observers. During
+                // onboarding the flow owns this (so the system sheet doesn't
+                // cover the intro) and calls startHealthPipeline() itself on
+                // completion; here it only runs for already-onboarded users.
+                if hasCompletedOnboarding {
+                    await startHealthPipeline()
                 }
-
-                // Register HealthKit background observers for automatic sync
-                await backgroundSyncManager.setUp()
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
@@ -151,6 +164,18 @@ struct LoopbackApp: App {
                 }
             }
         }
+    }
+
+    /// HealthKit authorization + first metrics sync + background-observer
+    /// registration. Called from the post-login `.task` for onboarded users,
+    /// and from `OnboardingView` on completion (the `.task` HK block is gated
+    /// off during onboarding). Idempotent — the system auth sheet shows once.
+    private func startHealthPipeline() async {
+        if healthMetricsSyncEnabled {
+            _ = await healthMetricsSyncer.requestAuthorization()
+            try? await healthMetricsSyncer.syncMetrics()
+        }
+        await backgroundSyncManager.setUp()
     }
 
     /// Refreshes everything after a credential change so it takes effect
