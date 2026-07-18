@@ -16,13 +16,22 @@ struct TrainingTabView: View {
     @ObservedObject var workoutManager: WorkoutManager
     @ObservedObject var missedWorkoutDetector: MissedWorkoutDetector
     @Environment(\.modelContext) private var modelContext
+    @Query private var feedbackEntries: [WorkoutFeedback]
     @State private var viewMode: ViewMode = .timeline
     @State private var selectedDate: Date?
     @State private var feedbackWorkout: MissedWorkoutInfo?
     @State private var pastWorkoutsLimit = 10
+    @AppStorage("onboardingSeededGoal") private var onboardingSeededGoal = false
+    @AppStorage("onboardingNudgeDismissed") private var onboardingNudgeDismissed = false
 
     enum ViewMode: String, CaseIterable {
         case timeline, list
+    }
+
+    /// Show the "tell your coach" nudge once onboarding seeded a goal but no
+    /// plan is lined up yet, until the athlete dismisses it.
+    private var showOnboardingNudge: Bool {
+        onboardingSeededGoal && !onboardingNudgeDismissed && scheduleManager.activePlan == nil
     }
 
     private var isSyncing: Bool {
@@ -62,6 +71,21 @@ struct TrainingTabView: View {
                 let date1 = Calendar.current.date(from: $1.date) ?? .distantPast
                 return date0 > date1
             }
+    }
+
+    /// Misses that still belong to the active plan get an inline section;
+    /// everything older lives in MissedDayStatsView.
+    private var missedCurrentPlanWorkouts: [ScheduledWorkoutPlan] {
+        let currentPlanIds = Set(scheduleManager.planWorkouts.map(\.id))
+        return missedWorkoutsInList.filter { currentPlanIds.contains($0.plan.id) }
+    }
+
+    private var earlierMissedCount: Int {
+        missedWorkoutsInList.count - missedCurrentPlanWorkouts.count
+    }
+
+    private var hasMissedHistory: Bool {
+        earlierMissedCount > 0 || !feedbackEntries.isEmpty
     }
 
     private var completedWorkouts: [ScheduledWorkoutPlan] {
@@ -106,6 +130,18 @@ struct TrainingTabView: View {
                         }
                     }
 
+                    // First-run nudge — onboarding seeded a goal but no plan yet.
+                    if showOnboardingNudge {
+                        Section {
+                            OnboardingNudgeCard {
+                                withAnimation { onboardingNudgeDismissed = true }
+                            }
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+                    }
+
                     // Plan wrap-up banner — the server marked a plan finishable.
                     if let finishable = scheduleManager.finishablePlan {
                         Section {
@@ -136,9 +172,32 @@ struct TrainingTabView: View {
                         }
                     }
 
-                    if !missedWorkoutsInList.isEmpty {
+                    if let strengthPlan = scheduleManager.activeStrengthPlan {
+                        Section {
+                            StrengthCycleCard(plan: strengthPlan, scheduleManager: scheduleManager)
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
+                    }
+
+                    if !upcomingWorkouts.isEmpty {
+                        Section("Upcoming Workouts") {
+                            ForEach(upcomingWorkouts, id: \.self) { scheduled in
+                                NavigationLink {
+                                    ScheduledWorkoutDetailView(scheduled: scheduled)
+                                } label: {
+                                    ScheduledWorkoutRow(scheduled: scheduled)
+                                }
+                            }
+                        }
+                    }
+
+                    // Only misses from the active plan stay inline; older ones
+                    // are reachable through the Missed Days stats screen below.
+                    if !missedCurrentPlanWorkouts.isEmpty {
                         Section("Missed") {
-                            ForEach(missedWorkoutsInList, id: \.self) { scheduled in
+                            ForEach(missedCurrentPlanWorkouts, id: \.self) { scheduled in
                                 if let feedback = existingFeedback(for: scheduled.plan.id) {
                                     // Already checked in — show reason and action
                                     HStack {
@@ -174,23 +233,12 @@ struct TrainingTabView: View {
                         }
                     }
 
-                    if let strengthPlan = scheduleManager.activeStrengthPlan {
+                    if hasMissedHistory {
                         Section {
-                            StrengthCycleCard(plan: strengthPlan, scheduleManager: scheduleManager)
-                                .listRowInsets(EdgeInsets())
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                        }
-                    }
-
-                    if !upcomingWorkouts.isEmpty {
-                        Section("Upcoming Workouts") {
-                            ForEach(upcomingWorkouts, id: \.self) { scheduled in
-                                NavigationLink {
-                                    ScheduledWorkoutDetailView(scheduled: scheduled)
-                                } label: {
-                                    ScheduledWorkoutRow(scheduled: scheduled)
-                                }
+                            NavigationLink {
+                                MissedDayStatsView(detector: missedWorkoutDetector)
+                            } label: {
+                                MissedDaysLinkRow(earlierMissedCount: earlierMissedCount)
                             }
                         }
                     }
@@ -266,7 +314,12 @@ struct TrainingTabView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 120)
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                NavigationLink {
+                    MissedDayStatsView(detector: missedWorkoutDetector)
+                } label: {
+                    Image(systemName: "chart.bar.xaxis")
+                }
                 NavigationLink {
                     PlansListView(scheduleManager: scheduleManager)
                 } label: {
@@ -313,9 +366,7 @@ struct TrainingTabView: View {
     }
 
     private func existingFeedback(for workoutId: UUID) -> WorkoutFeedback? {
-        let descriptor = FetchDescriptor<WorkoutFeedback>()
-        guard let allFeedback = try? modelContext.fetch(descriptor) else { return nil }
-        return allFeedback.first { $0.workoutId == workoutId && !$0.dismissed }
+        feedbackEntries.first { $0.workoutId == workoutId && !$0.dismissed }
     }
 
     private func workoutDisplayName(for scheduled: ScheduledWorkoutPlan) -> String {
@@ -331,6 +382,38 @@ struct TrainingTabView: View {
         @unknown default:
             return "Workout"
         }
+    }
+}
+
+// MARK: - Missed Days link row
+
+struct MissedDaysLinkRow: View {
+    let earlierMissedCount: Int
+
+    var body: some View {
+        HStack(spacing: 13) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 18))
+                .foregroundStyle(LB.amber)
+                .frame(width: 40, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous).fill(LB.surfaceTile)
+                )
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Missed days")
+                    .font(.lbDisplay(15, .semibold))
+                    .foregroundStyle(LB.textPrimary)
+                Text(earlierMissedCount > 0
+                     ? "\(earlierMissedCount) from earlier plans · stats & history"
+                     : "Stats & history")
+                    .font(.lbMono(11))
+                    .foregroundStyle(LB.textTertiary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -403,6 +486,49 @@ struct ScheduledWorkoutRow: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = dc.hour != nil ? .short : .none
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Onboarding nudge
+
+/// Shown on the training home after onboarding seeds a goal but before a plan
+/// exists. Dismissible; never returns once dismissed.
+private struct OnboardingNudgeCard: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(LB.accent)
+                .frame(width: 40, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous).fill(LB.accentTint())
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Ready when you are")
+                    .font(.lbDisplay(15, .semibold))
+                    .foregroundStyle(LB.textPrimary)
+                Text("Tell your coach you're ready and they'll build your plan.")
+                    .font(.lbBody(13))
+                    .foregroundStyle(LB.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 6)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(LB.textTertiary)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(LB.surfaceControl))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .lbCard(border: LB.accent.opacity(0.3))
     }
 }
 
