@@ -187,6 +187,8 @@ struct ScheduledWorkoutDetailView: View {
         case .energy(let value, let unit):
             let measurement = Measurement(value: value, unit: unit)
             return formatMeasurement(measurement)
+        case .poolSwimDistanceWithTime(let distance, let time):
+            return "\(formatMeasurement(distance)) in \(formatMeasurement(time))"
         @unknown default:
             return "Unknown"
         }
