@@ -248,21 +248,10 @@ struct ServerConfigView: View {
 
     private var brandFooter: some View {
         VStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(
-                        LinearGradient(colors: [Color(hex: 0x241B14), Color(hex: 0x16110B)],
-                                       startPoint: .top, endPoint: .bottom)
-                    )
-                    .frame(width: 48, height: 48)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(LB.line, lineWidth: 1)
-                    )
-                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(LB.accent)
-            }
+            Image("Logo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 96)
             Text("Loopback")
                 .font(.lbDisplay(22, .semibold))
                 .tracking(-0.4)
