@@ -14,11 +14,8 @@ actor WorkoutAPIClient {
     var isConfigured: Bool { true }
 
     init(baseURL: String? = nil, apiKey: String? = nil) {
-        let info = Bundle.main.infoDictionary ?? [:]
-        let urlString = baseURL ?? info["WorkoutAPIBaseURL"] as? String ?? ""
-        let key = apiKey ?? info["WorkoutAPIKey"] as? String ?? ""
-        self.baseURL = URL(string: urlString) ?? URL(string: "https://localhost")!
-        self.apiKey = key
+        self.baseURL = URL(string: baseURL ?? "") ?? URL(string: "https://localhost")!
+        self.apiKey = apiKey ?? ""
     }
 
     func configure(baseURL: URL, apiKey: String) {

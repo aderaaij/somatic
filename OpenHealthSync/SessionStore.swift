@@ -148,30 +148,18 @@ final class SessionStore: ObservableObject {
     // MARK: - Credential resolution (also runs one-time migration)
 
     /// Reads the current server URL + token, migrating a legacy pasted API key
-    /// (or an Info.plist-provided key) into the Keychain the first time. Safe to
-    /// call repeatedly. Used by both the app init (to configure the client
-    /// synchronously) and this store (to seed published state).
+    /// into the Keychain the first time. Safe to call repeatedly. Used by both
+    /// the app init (to configure the client synchronously) and this store (to
+    /// seed published state).
     static func resolveCredentials() -> (serverURL: String, token: String) {
         let defaults = UserDefaults.standard
-        let info = Bundle.main.infoDictionary ?? [:]
+        let serverURL = defaults.string(forKey: baseURLKey) ?? ""
 
-        var serverURL = defaults.string(forKey: baseURLKey) ?? ""
-        if serverURL.isEmpty {
-            serverURL = info["WorkoutAPIBaseURL"] as? String ?? ""
-        }
-
-        if Keychain.get(tokenKey) == nil {
-            if let legacy = defaults.string(forKey: legacyKeyKey), !legacy.isEmpty {
-                // Migrate the previously pasted API key into the Keychain (doc §8).
-                Keychain.set(legacy, for: tokenKey)
-                defaults.removeObject(forKey: legacyKeyKey)
-            } else if let plistKey = info["WorkoutAPIKey"] as? String, !plistKey.isEmpty {
-                Keychain.set(plistKey, for: tokenKey)
-            }
-        }
-
-        if !serverURL.isEmpty {
-            defaults.set(serverURL, forKey: baseURLKey)
+        if Keychain.get(tokenKey) == nil,
+           let legacy = defaults.string(forKey: legacyKeyKey), !legacy.isEmpty {
+            // Migrate the previously pasted API key into the Keychain (doc §8).
+            Keychain.set(legacy, for: tokenKey)
+            defaults.removeObject(forKey: legacyKeyKey)
         }
 
         return (serverURL, Keychain.get(tokenKey) ?? "")

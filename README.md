@@ -101,36 +101,13 @@ git clone https://github.com/aderaaij/loopback-training-app.git
 cd loopback-training-app
 ```
 
-### 2. (Optional) Pre-fill dev credentials
-
-You can normally skip this: on first launch the app shows a login screen where you enter the server URL, username, and password, and it mints its own per-device token. For development builds you can pre-seed the server URL (and optionally a pre-minted token) instead:
-
-```bash
-cp Secrets.example.xcconfig Secrets.xcconfig
-```
-
-Edit `Secrets.xcconfig`:
-
-```
-WORKOUT_API_BASE_URL = https://your-server.example.com:8443
-WORKOUT_API_KEY = optional-pre-minted-token
-```
-
-> `Secrets.xcconfig` is git-ignored and will never be committed. Its values flow through Info.plist and seed the app once; signing in from the login screen overrides them.
-
-### 3. Open in Xcode
+### 2. Open in Xcode
 
 ```bash
 open OpenHealthSync.xcodeproj
 ```
 
-If you created `Secrets.xcconfig` in step 2, set it as the base configuration:
-
-1. Select the **OpenHealthSync** project in the navigator
-2. Go to **Info** → **Configurations**
-3. Under both **Debug** and **Release**, set the **OpenHealthSync target** row to `Secrets`
-
-### 4. Run
+### 3. Run
 
 Build and run on a physical device. On first launch, sign in with your server URL, username, and password (accounts are created by the admin in the server dashboard); pasting a pre-minted token works as an advanced alternative. The app will request HealthKit permissions for workout and health metric access.
 

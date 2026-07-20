@@ -13,7 +13,13 @@ import UIKit
 struct LoginView: View {
     @ObservedObject var session: SessionStore
 
+    /// Dev convenience only: prefill the maintainer's server in Debug builds.
+    /// Release builds must not bake in a personal hostname.
+    #if DEBUG
     private static let defaultServerURL = "https://ardencore.tail38e03e.ts.net:8443"
+    #else
+    private static let defaultServerURL = ""
+    #endif
 
     @State private var serverURL = ""
     @State private var username = ""
