@@ -148,6 +148,32 @@ actor WorkoutAPIClient {
         try validate(response)
     }
 
+    // MARK: - Workout History (server-side aggregates & linkage)
+
+    /// Per-period aggregates over the full server-side workout history,
+    /// newest period first. Volume is tiny (one row per period per activity),
+    /// so there's no pagination. Periods with no workouts are simply absent —
+    /// callers fill gaps when charting.
+    func fetchWorkoutSummary(period: String, activityType: String? = nil) async throws -> [ServerWorkoutSummaryRow] {
+        let url = baseURL.appendingPathComponent("api/workouts/summary")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        var queryItems = [URLQueryItem(name: "period", value: period)]
+        if let activityType {
+            queryItems.append(URLQueryItem(name: "activity_type", value: activityType))
+        }
+        components.queryItems = queryItems
+
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        try validate(response)
+
+        return try JSONDecoder().decode([ServerWorkoutSummaryRow].self, from: data)
+    }
+
     // MARK: - Workout Inventory Sync
 
     func syncInventory(_ inventory: [WorkoutInventoryItem]) async throws {

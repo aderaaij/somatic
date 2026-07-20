@@ -316,6 +316,11 @@ struct TrainingTabView: View {
             }
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 NavigationLink {
+                    TrendsView(apiClient: workoutManager.apiClient)
+                } label: {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                }
+                NavigationLink {
                     MissedDayStatsView(detector: missedWorkoutDetector)
                 } label: {
                     Image(systemName: "chart.bar.xaxis")
