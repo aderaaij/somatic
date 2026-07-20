@@ -15,7 +15,8 @@ struct ServerConfigView: View {
     @State private var showRemoveAllConfirmation = false
 
     // Training API fields
-    @State private var trainingBaseURL = ""
+    @State private var trainingScheme: ServerScheme = .http
+    @State private var trainingHost = ""
     @State private var trainingAPIKey = ""
     @State private var apiKeyVisible = false
     @State private var status: ConnectionStatus = .idle
@@ -40,11 +41,14 @@ struct ServerConfigView: View {
         .navigationTitle(mode == .onboarding ? "Welcome to Loopback" : "Settings")
         .onAppear {
             if mode == .settings {
-                trainingBaseURL = storedBaseURL
+                if !storedBaseURL.isEmpty {
+                    (trainingScheme, trainingHost) = ServerScheme.split(storedBaseURL)
+                }
                 trainingAPIKey = storedAPIKey
             }
         }
-        .onChange(of: trainingBaseURL) { _, _ in resetStatus() }
+        .onChange(of: trainingScheme) { _, _ in resetStatus() }
+        .onChange(of: trainingHost) { _, _ in resetStatus() }
         .onChange(of: trainingAPIKey) { _, _ in resetStatus() }
     }
 
@@ -223,13 +227,13 @@ struct ServerConfigView: View {
     }
 
     private var saveDisabled: Bool {
-        trainingBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ServerScheme.compose(trainingScheme, trainingHost).isEmpty
             || trainingAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || status == .connecting
     }
 
     private func save() {
-        let url = trainingBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = ServerScheme.compose(trainingScheme, trainingHost)
         let key = trainingAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         status = .connecting
         Task { @MainActor in
@@ -278,11 +282,7 @@ struct ServerConfigView: View {
 
     private var trainingAPIFields: some View {
         Group {
-            TextField("Server URL", text: $trainingBaseURL)
-                .keyboardType(.URL)
-                .textContentType(.none)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            ServerURLInput(scheme: $trainingScheme, host: $trainingHost)
 
             HStack {
                 if apiKeyVisible {

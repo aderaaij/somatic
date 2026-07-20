@@ -21,7 +21,10 @@ struct LoginView: View {
     private static let defaultServerURL = ""
     #endif
 
-    @State private var serverURL = ""
+    // Self-hosted servers are typically plain HTTP on a LAN/tailnet, so http
+    // is the friendlier default for a blank form; a stored URL overrides it.
+    @State private var serverScheme: ServerScheme = .http
+    @State private var serverHost = ""
     @State private var username = ""
     @State private var password = ""
 
@@ -46,11 +49,7 @@ struct LoginView: View {
             }
 
             Section("Server") {
-                TextField("Server URL", text: $serverURL)
-                    .keyboardType(.URL)
-                    .textContentType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                ServerURLInput(scheme: $serverScheme, host: $serverHost)
             }
             .listRowBackground(LB.surface)
 
@@ -104,12 +103,16 @@ struct LoginView: View {
         .lbList()
         .navigationTitle("Sign In")
         .onAppear {
-            if serverURL.isEmpty {
-                serverURL = session.serverURL.isEmpty ? Self.defaultServerURL : session.serverURL
+            if serverHost.isEmpty {
+                let stored = session.serverURL.isEmpty ? Self.defaultServerURL : session.serverURL
+                if !stored.isEmpty {
+                    (serverScheme, serverHost) = ServerScheme.split(stored)
+                }
             }
             if username.isEmpty { username = session.username }
         }
-        .onChange(of: serverURL) { _, _ in resetStatus() }
+        .onChange(of: serverScheme) { _, _ in resetStatus() }
+        .onChange(of: serverHost) { _, _ in resetStatus() }
         .onChange(of: username) { _, _ in resetStatus() }
         .onChange(of: password) { _, _ in resetStatus() }
         .onChange(of: manualToken) { _, _ in resetStatus() }
@@ -149,7 +152,7 @@ struct LoginView: View {
 
     // MARK: - Actions
 
-    private var trimmedURL: String { serverURL.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedURL: String { ServerScheme.compose(serverScheme, serverHost) }
 
     private var loginDisabled: Bool {
         trimmedURL.isEmpty
