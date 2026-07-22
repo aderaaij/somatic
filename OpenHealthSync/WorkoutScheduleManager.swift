@@ -138,20 +138,57 @@ class WorkoutScheduleManager: ObservableObject {
         }
     }
 
+    // MARK: - Cache-First Rendering
+
+    private var didRestoreFromCache = false
+
+    /// Renders the last successful server responses instantly (and offline)
+    /// while the network refresh runs. One-shot per launch; live fetches
+    /// overwrite whatever this restores. The cache is cleared on sign-out, so
+    /// a restored payload always belongs to the signed-in account.
+    private func restoreFromCache() async {
+        guard !didRestoreFromCache else { return }
+        didRestoreFromCache = true
+
+        if let plans = await apiClient.cachedActivePlans() {
+            applyActivePlans(plans)
+            if let plan = activePlan,
+               let workouts = await apiClient.cachedPlanWorkouts(planId: plan.id) {
+                planWorkouts = workouts
+            }
+            // A cache hit is a known state (even "no plans") — no spinner.
+            isLoadingPlan = false
+        }
+        if let response = await apiClient.cachedScheduleCalendar() {
+            calendarEntries = response.entries
+        }
+        if let plans = await apiClient.cachedAllPlans() {
+            allPlans = plans
+        }
+    }
+
+    private func applyActivePlans(_ plans: [TrainingPlan]) {
+        activePlans = plans
+        activePlan = plans.first { !$0.isStrength }
+        activeStrengthPlan = plans.first { $0.isStrength }
+    }
+
     // MARK: - Active Plan
 
     func loadActivePlan() async {
-        isLoadingPlan = true
+        await restoreFromCache()
+        // Show the loading state only when there's nothing to render yet —
+        // with cached content on screen the refresh happens silently.
+        if activePlans.isEmpty {
+            isLoadingPlan = true
+        }
         defer { isLoadingPlan = false }
         do {
             // A running plan and a strength cycle can both be active.
             let plans = try await apiClient.fetchActivePlans()
-            activePlans = plans
-            let plan = plans.first { !$0.isStrength }
-            activePlan = plan
-            activeStrengthPlan = plans.first { $0.isStrength }
+            applyActivePlans(plans)
 
-            if let plan {
+            if let plan = activePlan {
                 planWorkouts = try await apiClient.fetchPlanWorkouts(planId: plan.id)
             } else {
                 planWorkouts = []
@@ -261,7 +298,8 @@ class WorkoutScheduleManager: ObservableObject {
     /// Loads every plan so the plans browser can group them into
     /// upcoming / current / archived.
     func loadAllPlans() async {
-        isLoadingPlans = true
+        await restoreFromCache()
+        isLoadingPlans = allPlans.isEmpty
         defer { isLoadingPlans = false }
         do {
             allPlans = try await apiClient.fetchAllPlans()

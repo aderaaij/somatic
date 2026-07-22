@@ -96,13 +96,16 @@ actor WorkoutAPIClient {
         throw WorkoutAPIError.serverError(code)
     }
 
-    /// `perform` + decode with the shared ISO-8601 decoder.
+    /// `perform` + decode with the shared ISO-8601 decoder. When `cacheKey` is
+    /// set, the raw bytes of a successfully-decoded response are stored so the
+    /// matching `cached…()` accessor can replay them on the next launch.
     private func request<T: Decodable>(
         _ method: String,
         _ path: String,
         query: [URLQueryItem] = [],
         body: Data? = nil,
-        signalsUnauthorized: Bool = true
+        signalsUnauthorized: Bool = true,
+        cacheKey: String? = nil
     ) async throws -> T {
         let (data, _) = try await perform(
             method, path,
@@ -110,7 +113,59 @@ actor WorkoutAPIClient {
             body: body,
             signalsUnauthorized: signalsUnauthorized
         )
-        return try Self.decoder.decode(T.self, from: data)
+        let value = try Self.decoder.decode(T.self, from: data)
+        if let cacheKey {
+            storeCached(data, for: cacheKey)
+        }
+        return value
+    }
+
+    // MARK: - Response Cache (offline-first rendering)
+    //
+    // Stores the raw bytes of the last successful response for selected GET
+    // endpoints so screens can render instantly (and offline) before the
+    // network refresh lands. Cached bytes go through the same shared decoder,
+    // so a cache read behaves exactly like the original response.
+
+    private enum CacheKey {
+        static let activePlans = "plans-active"
+        static let allPlans = "plans-all"
+        static let scheduleCalendar = "schedule-calendar"
+        static func planWorkouts(_ planId: UUID) -> String { "plan-workouts-\(planId.uuidString)" }
+    }
+
+    private nonisolated static var cacheDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("APIResponseCache", isDirectory: true)
+    }
+
+    private func storeCached(_ data: Data, for key: String) {
+        let directory = Self.cacheDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: directory.appendingPathComponent("\(key).json"), options: .atomic)
+    }
+
+    private func cached<T: Decodable>(_ key: String) -> T? {
+        guard let data = try? Data(contentsOf: Self.cacheDirectory.appendingPathComponent("\(key).json")) else {
+            return nil
+        }
+        return try? Self.decoder.decode(T.self, from: data)
+    }
+
+    /// Wipes every cached response. Called when the session ends or the
+    /// account/server changes, so one account never renders another's data.
+    func clearCache() {
+        try? FileManager.default.removeItem(at: Self.cacheDirectory)
+    }
+
+    func cachedActivePlans() -> [TrainingPlan]? { cachedPlans(for: CacheKey.activePlans) }
+    func cachedAllPlans() -> [TrainingPlan]? { cachedPlans(for: CacheKey.allPlans) }
+    func cachedScheduleCalendar() -> CalendarResponse? { cached(CacheKey.scheduleCalendar) }
+    func cachedPlanWorkouts(planId: UUID) -> [PlanWorkout]? { cached(CacheKey.planWorkouts(planId)) }
+
+    private func cachedPlans(for key: String) -> [TrainingPlan]? {
+        let wrapped: [FailableDecodable<TrainingPlan>]? = cached(key)
+        return wrapped.map { $0.compactMap(\.value) }
     }
 
     /// Performs a lightweight authenticated request to verify the current
@@ -282,19 +337,26 @@ actor WorkoutAPIClient {
     /// Fetches every active plan. A running plan and a strength cycle can be
     /// active simultaneously, so callers split the result by activity type.
     func fetchActivePlans() async throws -> [TrainingPlan] {
-        try await fetchPlans(query: [URLQueryItem(name: "status", value: "active")])
+        try await fetchPlans(
+            query: [URLQueryItem(name: "status", value: "active")],
+            cacheKey: CacheKey.activePlans
+        )
     }
 
     /// Fetches every plan (no status filter), newest first. Used by the plans
     /// browser to group plans into upcoming / current / archived.
     func fetchAllPlans() async throws -> [TrainingPlan] {
-        try await fetchPlans(query: [])
+        try await fetchPlans(query: [], cacheKey: CacheKey.allPlans)
     }
 
     /// Decodes resiliently: a single plan with malformed (LLM-authored)
     /// metadata shouldn't blank the entire list.
-    private func fetchPlans(query: [URLQueryItem]) async throws -> [TrainingPlan] {
-        let wrapped: [FailableDecodable<TrainingPlan>] = try await request("GET", "api/plans", query: query)
+    private func fetchPlans(query: [URLQueryItem], cacheKey: String) async throws -> [TrainingPlan] {
+        let wrapped: [FailableDecodable<TrainingPlan>] = try await request(
+            "GET", "api/plans",
+            query: query,
+            cacheKey: cacheKey
+        )
         return wrapped.compactMap(\.value)
     }
 
@@ -329,7 +391,7 @@ actor WorkoutAPIClient {
         var query: [URLQueryItem] = []
         if let from { query.append(URLQueryItem(name: "from", value: from)) }
         if let to { query.append(URLQueryItem(name: "to", value: to)) }
-        return try await request("GET", "api/schedule/calendar", query: query)
+        return try await request("GET", "api/schedule/calendar", query: query, cacheKey: CacheKey.scheduleCalendar)
     }
 
     /// Fetches a plan's cadence expanded to concrete dated sessions, with
@@ -339,7 +401,10 @@ actor WorkoutAPIClient {
     }
 
     func fetchPlanWorkouts(planId: UUID) async throws -> [PlanWorkout] {
-        try await request("GET", "api/plans/\(planId.uuidString)/workouts")
+        try await request(
+            "GET", "api/plans/\(planId.uuidString)/workouts",
+            cacheKey: CacheKey.planWorkouts(planId)
+        )
     }
 }
 

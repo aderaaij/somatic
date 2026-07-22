@@ -113,6 +113,15 @@ final class SessionStore: ObservableObject {
     // MARK: - Internals
 
     private func establish(serverURL: String, token: String, tokenId: String?, user: AuthUser?) async {
+        // A different server or account invalidates cached responses from the
+        // previous one — clear before any fetch below can warm the cache.
+        let defaultsBefore = UserDefaults.standard
+        let previousURL = defaultsBefore.string(forKey: Self.baseURLKey)
+        let previousUsername = defaultsBefore.string(forKey: Self.usernameKey)
+        if previousURL != serverURL || (user != nil && previousUsername != user?.username) {
+            await apiClient.clearCache()
+        }
+
         await configureClients(serverURL: serverURL, token: token)
 
         Keychain.set(token, for: Self.tokenKey)
@@ -147,6 +156,10 @@ final class SessionStore: ObservableObject {
     }
 
     private func clearSession() {
+        // Cached responses belong to the session that just ended.
+        let apiClient = self.apiClient
+        Task { await apiClient.clearCache() }
+
         Keychain.delete(Self.tokenKey)
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: Self.tokenIdKey)
