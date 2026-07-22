@@ -9,6 +9,7 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 // MARK: - Feedback Flow (multi-workout wrapper)
 
@@ -123,7 +124,7 @@ struct MissedWorkoutFeedbackSheet: View {
                         )
                         isRescheduling = false
                         if !success {
-                            print("Failed to reschedule workout \(workout.id) to \(newDate)")
+                            AppLog.scheduling.error("Failed to reschedule workout \(workout.id, privacy: .public) to \(newDate, privacy: .public)")
                         }
                         onComplete(workout)
                     }

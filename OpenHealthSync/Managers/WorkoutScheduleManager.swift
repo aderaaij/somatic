@@ -14,6 +14,7 @@ import SwiftData
 import UIKit
 import WorkoutKit
 import HealthKit
+import os
 
 enum RefreshState: Equatable {
     case idle
@@ -194,7 +195,7 @@ class WorkoutScheduleManager: ObservableObject {
                 planWorkouts = []
             }
         } catch {
-            print("Failed to load active plan: \(error)")
+            AppLog.sync.error("Failed to load active plan: \(String(describing: error), privacy: .public)")
         }
 
         await loadScheduleCalendar()
@@ -280,7 +281,7 @@ class WorkoutScheduleManager: ObservableObject {
             calendarEntries = response.entries
         } catch {
             // Best-effort: keep whatever agenda we already have.
-            print("Failed to load schedule calendar: \(error)")
+            AppLog.sync.error("Failed to load schedule calendar: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -290,7 +291,7 @@ class WorkoutScheduleManager: ObservableObject {
         do {
             return try await apiClient.fetchPlanSchedule(planId: planId)
         } catch {
-            print("Failed to load schedule for plan \(planId): \(error)")
+            AppLog.sync.error("Failed to load schedule for plan \(planId, privacy: .public): \(String(describing: error), privacy: .public)")
             return nil
         }
     }
@@ -304,7 +305,7 @@ class WorkoutScheduleManager: ObservableObject {
         do {
             allPlans = try await apiClient.fetchAllPlans()
         } catch {
-            print("Failed to load plans: \(error)")
+            AppLog.sync.error("Failed to load plans: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -314,7 +315,7 @@ class WorkoutScheduleManager: ObservableObject {
         do {
             return try await apiClient.fetchPlanWorkouts(planId: planId)
         } catch {
-            print("Failed to load workouts for plan \(planId): \(error)")
+            AppLog.sync.error("Failed to load workouts for plan \(planId, privacy: .public): \(String(describing: error), privacy: .public)")
             return []
         }
     }
@@ -357,7 +358,7 @@ class WorkoutScheduleManager: ObservableObject {
                 try? await apiClient.markPlanWorkoutCompleted(id: item.id)
             }
         } catch {
-            print("Failed to sync workout inventory: \(error)")
+            AppLog.sync.error("Failed to sync workout inventory: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -379,7 +380,7 @@ class WorkoutScheduleManager: ObservableObject {
             let actions = try await apiClient.fetchPendingActions()
 
             if !queue.isEmpty || !actions.isEmpty {
-                print("[AutoSync] Found \(queue.count) queued workouts, \(actions.count) pending actions")
+                AppLog.sync.info("Auto-sync found \(queue.count) queued workouts, \(actions.count) pending actions")
                 await refreshFromServer(modelContext: modelContext)
                 await loadActivePlan()
             } else {
@@ -391,7 +392,7 @@ class WorkoutScheduleManager: ObservableObject {
             }
         } catch {
             // Silent failure — auto-sync is best-effort
-            print("[AutoSync] Check failed: \(error)")
+            AppLog.sync.error("Auto-sync check failed: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -436,7 +437,7 @@ class WorkoutScheduleManager: ObservableObject {
                     try await apiClient.updateQueueItemStatus(id: composition.id, status: "synced")
                     scheduled += 1
                 } catch {
-                    print("Failed to schedule '\(composition.displayName)': \(error)")
+                    AppLog.scheduling.error("Failed to schedule '\(composition.displayName, privacy: .public)': \(String(describing: error), privacy: .public)")
                 }
             }
 
@@ -460,14 +461,14 @@ class WorkoutScheduleManager: ObservableObject {
 
     func removeWorkout(id: UUID) async -> Bool {
         guard let dateComponents = scheduledDateMap[id] else {
-            print("No stored date for workout \(id), cannot remove")
+            AppLog.scheduling.warning("No stored date for workout \(id, privacy: .public), cannot remove")
             return false
         }
 
         // Find the matching plan in the scheduler
         let allScheduled = await WorkoutScheduler.shared.scheduledWorkouts
         guard let match = allScheduled.first(where: { $0.plan.id == id }) else {
-            print("Workout \(id) not found in scheduler")
+            AppLog.scheduling.warning("Workout \(id, privacy: .public) not found in scheduler")
             scheduledDateMap.removeValue(forKey: id)
             return false
         }
@@ -486,14 +487,14 @@ class WorkoutScheduleManager: ObservableObject {
         // Find the existing plan in the scheduler
         let allScheduled = await WorkoutScheduler.shared.scheduledWorkouts
         guard let match = allScheduled.first(where: { $0.plan.id == id }) else {
-            print("Workout \(id) not found in scheduler for reschedule")
+            AppLog.scheduling.warning("Workout \(id, privacy: .public) not found in scheduler for reschedule")
             return false
         }
 
         // Remove from old date
         let removed = await removeWorkout(id: id)
         if !removed {
-            print("Could not remove workout \(id) from old date for reschedule")
+            AppLog.scheduling.warning("Could not remove workout \(id, privacy: .public) from old date for reschedule")
         }
 
         // Schedule at new date
@@ -518,7 +519,7 @@ class WorkoutScheduleManager: ObservableObject {
                 try await apiClient.submitFeedback(payload)
                 markFeedbackSynced(id: feedbackId, modelContext: modelContext)
             } catch {
-                print("Feedback sync failed (will retry on next sync): \(error.localizedDescription)")
+                AppLog.sync.error("Feedback sync failed (will retry on next sync): \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -551,7 +552,7 @@ class WorkoutScheduleManager: ObservableObject {
                 try await apiClient.submitFeedback(payload)
                 feedback.synced = true
             } catch {
-                print("Retry sync failed for feedback \(feedback.id): \(error.localizedDescription)")
+                AppLog.sync.error("Retry sync failed for feedback \(feedback.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -574,7 +575,7 @@ class WorkoutScheduleManager: ObservableObject {
         // Remove the old version
         let removed = await removeWorkout(id: id)
         if !removed {
-            print("Could not remove old workout \(id) for edit")
+            AppLog.scheduling.warning("Could not remove old workout \(id, privacy: .public) for edit")
         }
 
         // Schedule the updated version
@@ -592,7 +593,7 @@ class WorkoutScheduleManager: ObservableObject {
             await loadScheduledWorkouts()
             return true
         } catch {
-            print("Failed to schedule edited workout: \(error)")
+            AppLog.scheduling.error("Failed to schedule edited workout: \(String(describing: error), privacy: .public)")
             return false
         }
     }
@@ -613,7 +614,7 @@ class WorkoutScheduleManager: ObservableObject {
 
                 case "edit":
                     guard let composition = action.composition else {
-                        print("Edit action \(action.id) missing composition")
+                        AppLog.sync.warning("Edit action \(action.id, privacy: .public) missing composition")
                         continue
                     }
                     let success = await editWorkout(id: action.workoutId, composition: composition)
@@ -622,11 +623,11 @@ class WorkoutScheduleManager: ObservableObject {
                     }
 
                 default:
-                    print("Unknown action type: \(action.action)")
+                    AppLog.sync.warning("Unknown action type: \(action.action, privacy: .public)")
                 }
             }
         } catch {
-            print("Failed to sync edits/deletes: \(error)")
+            AppLog.sync.error("Failed to sync edits/deletes: \(String(describing: error), privacy: .public)")
         }
     }
 

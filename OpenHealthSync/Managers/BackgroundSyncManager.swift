@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import HealthKit
+import os
 
 /// Registers HealthKit background delivery observers so that new workouts
 /// and health data trigger automatic extraction and upload to the Training API.
@@ -40,7 +41,7 @@ class BackgroundSyncManager: ObservableObject {
             frequency: .immediate
         ) { [weak self] in
             guard let self else { return }
-            print("[BackgroundSync] New workout detected, extracting...")
+            AppLog.health.info("New workout detected, extracting")
             await self.workoutManager.extractNewWorkouts()
         }
 
@@ -57,12 +58,12 @@ class BackgroundSyncManager: ObservableObject {
         for (type, frequency) in healthTypes {
             await enableObserver(for: type, frequency: frequency) { [weak self] in
                 guard let self else { return }
-                print("[BackgroundSync] Health data updated (\(type.identifier)), syncing metrics...")
+                AppLog.health.info("Health data updated (\(type.identifier, privacy: .public)), syncing metrics")
                 try? await self.healthMetricsSyncer.syncMetrics()
             }
         }
 
-        print("[BackgroundSync] Registered \(observerQueries.count) background observers")
+        AppLog.health.info("Registered \(self.observerQueries.count) background observers")
     }
 
     // MARK: - Private
@@ -76,14 +77,14 @@ class BackgroundSyncManager: ObservableObject {
         do {
             try await healthStore.enableBackgroundDelivery(for: sampleType, frequency: frequency)
         } catch {
-            print("[BackgroundSync] Failed to enable background delivery for \(sampleType.identifier): \(error)")
+            AppLog.health.error("Failed to enable background delivery for \(sampleType.identifier, privacy: .public): \(String(describing: error), privacy: .public)")
             return
         }
 
         // Register observer query
         let query = HKObserverQuery(sampleType: sampleType, predicate: nil) { _, completionHandler, error in
             if let error {
-                print("[BackgroundSync] Observer error for \(sampleType.identifier): \(error)")
+                AppLog.health.error("Observer error for \(sampleType.identifier, privacy: .public): \(String(describing: error), privacy: .public)")
                 completionHandler()
                 return
             }

@@ -11,6 +11,7 @@ import Foundation
 import Combine
 import UserNotifications
 import SwiftUI
+import os
 
 enum PreferredRunTime: String, CaseIterable, Identifiable {
     case morning
@@ -65,7 +66,7 @@ class NotificationManager: ObservableObject {
                 registerCategories()
             }
         } catch {
-            print("Notification permission error: \(error)")
+            AppLog.notifications.error("Notification permission error: \(String(describing: error), privacy: .public)")
             isAuthorized = false
         }
     }
@@ -117,7 +118,7 @@ class NotificationManager: ObservableObject {
         do {
             try await center.add(request)
         } catch {
-            print("Failed to schedule missed workout notification: \(error)")
+            AppLog.notifications.error("Failed to schedule missed workout notification: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -153,7 +154,7 @@ class NotificationManager: ObservableObject {
             notifiedIds.insert(plan.id.uuidString)
             UserDefaults.standard.set(Array(notifiedIds), forKey: Self.notifiedPlansKey)
         } catch {
-            print("Failed to schedule plan celebration notification: \(error)")
+            AppLog.notifications.error("Failed to schedule plan celebration notification: \(String(describing: error), privacy: .public)")
         }
     }
 

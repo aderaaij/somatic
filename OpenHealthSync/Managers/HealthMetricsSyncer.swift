@@ -7,6 +7,7 @@
 
 import Foundation
 import HealthKit
+import os
 
 actor HealthMetricsSyncer {
     private let healthStore = HKHealthStore()
@@ -57,7 +58,7 @@ actor HealthMetricsSyncer {
             try await healthStore.requestAuthorization(toShare: [], read: Self.readTypes)
             return true
         } catch {
-            print("[HealthMetricsSyncer] Authorization failed: \(error)")
+            AppLog.health.error("HealthKit authorization failed: \(String(describing: error), privacy: .public)")
             return false
         }
     }
@@ -92,7 +93,7 @@ actor HealthMetricsSyncer {
         try await apiClient.sendHealthMetrics(payload)
 
         UserDefaults.standard.set(now, forKey: lastSyncKey)
-        print("[HealthMetricsSyncer] Synced \(metrics.count) days of health metrics")
+        AppLog.health.info("Synced \(metrics.count) days of health metrics")
     }
 
     // MARK: - Fetch All Metrics
