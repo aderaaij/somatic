@@ -106,6 +106,7 @@ actor WorkoutExtractor {
             totalDistance: workout.statistics(for: HKQuantityType(.distanceWalkingRunning))?.sumQuantity()?.doubleValue(for: .meter()),
             totalEnergyBurned: workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie()),
             source: workout.sourceRevision.source.bundleIdentifier,
+            sourceName: workout.sourceRevision.source.name,
             route: nilIfEmpty(dsRoute),
             heartRate: nilIfEmpty(dsHr),
             cadence: nilIfEmpty(dsCad),

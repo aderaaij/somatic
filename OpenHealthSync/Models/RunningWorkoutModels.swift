@@ -29,6 +29,7 @@ struct DetailedWorkout: Codable, Sendable {
     let totalDistance: Double?             // meters
     let totalEnergyBurned: Double?        // kcal
     let source: String
+    let sourceName: String?               // human-readable HKSource.name, display-only
     let route: [RoutePoint]?
     let heartRate: [TimeSeries]?          // bpm
     let cadence: [TimeSeries]?            // steps/min
