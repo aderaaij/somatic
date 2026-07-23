@@ -33,11 +33,21 @@ struct LoginView: View {
     @State private var manualTokenVisible = false
 
     @State private var status: FormStatus = .idle
+    @State private var handshake: Handshake = .idle
 
     enum FormStatus: Equatable {
         case idle
         case working
         case failed(String)
+    }
+
+    /// Result of the `/api/health` handshake, surfaced under the Server field.
+    /// A `.warning` flips Sign In to "Sign In Anyway" — the version gate never
+    /// hard-blocks (doc §2).
+    enum Handshake: Equatable {
+        case idle
+        case verified(String)
+        case warning(ServerCompatibility)
     }
 
     var body: some View {
@@ -50,6 +60,7 @@ struct LoginView: View {
 
             Section("Server") {
                 ServerURLInput(scheme: $serverScheme, host: $serverHost)
+                handshakeRow
             }
             .listRowBackground(LB.surface)
 
@@ -62,8 +73,10 @@ struct LoginView: View {
                 SecureField("Password", text: $password)
                     .textContentType(.password)
 
-                Button { logIn() } label: { actionLabel("Sign In") }
-                    .disabled(loginDisabled)
+                Button { logIn() } label: {
+                    actionLabel(warningAcknowledged ? "Sign In Anyway" : "Sign In")
+                }
+                .disabled(loginDisabled)
 
                 statusRow
             }
@@ -111,8 +124,8 @@ struct LoginView: View {
             }
             if username.isEmpty { username = session.username }
         }
-        .onChange(of: serverScheme) { _, _ in resetStatus() }
-        .onChange(of: serverHost) { _, _ in resetStatus() }
+        .onChange(of: serverScheme) { _, _ in resetHandshake() }
+        .onChange(of: serverHost) { _, _ in resetHandshake() }
         .onChange(of: username) { _, _ in resetStatus() }
         .onChange(of: password) { _, _ in resetStatus() }
         .onChange(of: manualToken) { _, _ in resetStatus() }
@@ -156,14 +169,36 @@ struct LoginView: View {
             || status == .working
     }
 
+    /// Whether a compatibility warning is already on screen — the next Sign In
+    /// tap is the explicit "anyway" and skips a repeat handshake.
+    private var warningAcknowledged: Bool {
+        if case .warning = handshake { return true }
+        return false
+    }
+
     private func logIn() {
-        status = .working
+        let url = trimmedURL
+        let user = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let device = UIDevice.current.name
+        let acknowledged = warningAcknowledged
+        status = .working
         Task { @MainActor in
             do {
+                // Handshake before the first sign-in attempt (doc §1–2). A
+                // wrong-server / DB-down probe throws and is shown below; a
+                // version warning pauses for an explicit "Sign In Anyway".
+                if !acknowledged {
+                    let compat = try await session.probeServerHealth(serverURL: url)
+                    if compat.isWarning {
+                        handshake = .warning(compat)
+                        status = .idle
+                        return
+                    }
+                    handshake = session.serverVersion.map { .verified("Loopback server · v\($0)") } ?? .idle
+                }
                 try await session.login(
-                    serverURL: trimmedURL,
-                    username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                    serverURL: url,
+                    username: user,
                     password: password,
                     deviceName: device
                 )
@@ -190,12 +225,21 @@ struct LoginView: View {
         if status != .working { status = .idle }
     }
 
-    /// Maps errors to the copy the handoff doc specifies (§2).
+    /// A changed server address invalidates the last handshake — re-verify on
+    /// the next Sign In.
+    private func resetHandshake() {
+        handshake = .idle
+        resetStatus()
+    }
+
+    /// Maps errors to the copy the handoff doc specifies (§1–2).
     private func message(for error: Error) -> String {
         if let apiError = error as? WorkoutAPIError {
             switch apiError {
             case .invalidCredentials: return "Incorrect username or password."
             case .rateLimited: return "Too many attempts. Wait a minute and try again."
+            case .notLoopbackServer: return "That address isn't a Loopback server."
+            case .databaseUnavailable: return "Server reached, but its database is down. Try again shortly."
             case .serverError(let code) where code == 401 || code == 403:
                 return "Incorrect username or password."
             default: break
@@ -224,6 +268,27 @@ struct LoginView: View {
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.red)
+        }
+    }
+
+    /// Server-identity + version readout under the URL field: a green tick when
+    /// the handshake succeeds, an amber/muted warning when the version is out
+    /// of range (sign-in still available via "Sign In Anyway").
+    @ViewBuilder
+    private var handshakeRow: some View {
+        switch handshake {
+        case .idle:
+            EmptyView()
+        case .verified(let text):
+            Label(text, systemImage: "checkmark.seal.fill")
+                .font(.caption)
+                .foregroundStyle(LB.green)
+        case .warning(let compatibility):
+            if let message = compatibility.message {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(compatibility.isSevere ? LB.amber : LB.textSecondary)
+            }
         }
     }
 }

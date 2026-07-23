@@ -57,6 +57,14 @@ actor WorkoutAPIClient {
     private nonisolated static let session = URLSession.shared
     #endif
 
+    // Identifies the app to the server on every request. The dashboard records
+    // this per-token (`last_user_agent`) and pretty-prints the `Loopback-iOS/`
+    // prefix specifically, so the format is exact on purpose.
+    private nonisolated static let userAgent: String = {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        return "Loopback-iOS/\(version)"
+    }()
+
     var isConfigured: Bool { true }
 
     // The API speaks ISO-8601 dates in both directions; every endpoint goes
@@ -118,6 +126,7 @@ actor WorkoutAPIClient {
             }
             var request = URLRequest(url: url)
             request.httpMethod = method
+            request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
             if authenticated {
                 request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             }
@@ -292,6 +301,21 @@ actor WorkoutAPIClient {
     }
 
     // MARK: - Authentication
+
+    /// Server-version handshake: `GET /api/health`, unauthenticated so it runs
+    /// before login. `on:` targets the candidate URL being set up (no failover
+    /// to the configured route). Any non-2xx throws — a server without the
+    /// endpoint (pre-0.1.0) surfaces as an error the setup flow degrades on.
+    func fetchHealth(on baseURL: URL? = nil) async throws -> ServerHealth {
+        let (data, _) = try await perform(
+            "GET", "api/health",
+            signalsUnauthorized: false,
+            timeout: 15,
+            on: baseURL,
+            authenticated: false
+        )
+        return try Self.decoder.decode(ServerHealth.self, from: data)
+    }
 
     /// Exchanges username + password for a bearer token. Unauthenticated by
     /// design; maps auth-specific status codes to typed errors so the login
@@ -535,6 +559,8 @@ enum WorkoutAPIError: LocalizedError {
     case invalidCredentials
     case rateLimited
     case planNotActive
+    case notLoopbackServer(service: String)
+    case databaseUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -542,6 +568,10 @@ enum WorkoutAPIError: LocalizedError {
             return "Workout API client is not configured"
         case .invalidResponse:
             return "Invalid response from server"
+        case .notLoopbackServer:
+            return "That address isn't a Loopback server."
+        case .databaseUnavailable:
+            return "The server is reachable but its database is unavailable. Try again shortly."
         case .unauthorized:
             return "Your session has expired. Please sign in again."
         case .invalidCredentials:

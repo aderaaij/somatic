@@ -20,6 +20,13 @@ final class SessionStore {
     private(set) var displayName = ""
     private(set) var role = ""
 
+    /// The version reported by the server's `/api/health` on the last setup /
+    /// login handshake; nil for a legacy server without the endpoint.
+    private(set) var serverVersion: ServerVersion?
+    /// How that version compares to what this app build supports. Purely
+    /// advisory — a warning never blocks sign-in.
+    private(set) var serverCompatibility: ServerCompatibility = .unknown
+
     private let apiClient: WorkoutAPIClient
     private weak var workoutManager: WorkoutManager?
 
@@ -32,6 +39,7 @@ final class SessionStore {
     static let usernameKey = "trainingAPIUsername"    // UserDefaults
     static let displayNameKey = "trainingAPIDisplayName" // UserDefaults
     static let roleKey = "trainingAPIRole"            // UserDefaults
+    static let serverVersionKey = "trainingAPIServerVersion" // UserDefaults (last /api/health version)
     static let legacyKeyKey = "trainingAPIKey"        // legacy UserDefaults API key
     static let onboardedKey = "hasCompletedOnboarding" // UserDefaults (@AppStorage in app root)
 
@@ -45,6 +53,8 @@ final class SessionStore {
         username = defaults.string(forKey: Self.usernameKey) ?? ""
         displayName = defaults.string(forKey: Self.displayNameKey) ?? ""
         role = defaults.string(forKey: Self.roleKey) ?? ""
+        serverVersion = defaults.string(forKey: Self.serverVersionKey).flatMap(ServerVersion.init)
+        serverCompatibility = ServerCompatibility.evaluate(serverVersion)
         isAuthenticated = !creds.token.isEmpty && !creds.serverURL.isEmpty
 
         // A session restored from the Keychain means this account already used
@@ -63,6 +73,35 @@ final class SessionStore {
     }
 
     // MARK: - Sign in
+
+    /// Server-version handshake before adopting a URL (doc §1–2). Confirms the
+    /// address is a healthy Loopback server — throwing `.notLoopbackServer` /
+    /// `.databaseUnavailable` when it isn't — and records the reported version.
+    /// A server without `/api/health` (or a transient failure) degrades to
+    /// `.unknown` rather than blocking, so the caller can still try to sign in.
+    /// Returns the compatibility verdict; a warning is advisory, never fatal.
+    @discardableResult
+    func probeServerHealth(serverURL rawURL: String) async throws -> ServerCompatibility {
+        let url = Self.normalizedURL(rawURL)
+        let health: ServerHealth
+        do {
+            health = try await apiClient.fetchHealth(on: url)
+        } catch {
+            // No usable handshake (pre-0.1.0 server, unreachable, or a
+            // non-JSON response). Don't block on it — clear any stale version
+            // and let the actual sign-in surface a real connection failure.
+            storeServerVersion(nil)
+            return .unknown
+        }
+        guard health.isLoopbackServer else {
+            throw WorkoutAPIError.notLoopbackServer(service: health.service)
+        }
+        guard health.databaseOK else {
+            throw WorkoutAPIError.databaseUnavailable
+        }
+        storeServerVersion(health.semanticVersion)
+        return serverCompatibility
+    }
 
     func login(serverURL rawURL: String, username: String, password: String, deviceName: String) async throws {
         let url = Self.normalizedURL(rawURL)
@@ -85,6 +124,12 @@ final class SessionStore {
     /// user for display.
     func applyManualToken(serverURL rawURL: String, token: String) async throws {
         let url = Self.normalizedURL(rawURL)
+
+        // Handshake first: reject a non-Loopback or DB-down address before
+        // adopting the token, and record the server version. A warning here is
+        // advisory (this path has no "anyway" step), so the verdict is ignored.
+        _ = try await probeServerHealth(serverURL: rawURL)
+
         await configureClients(serverURL: url.absoluteString, token: token)
 
         // Throws on an unreachable host or a bad token (401) without posting the
@@ -113,6 +158,19 @@ final class SessionStore {
     }
 
     // MARK: - Internals
+
+    /// Records the server version (published + persisted) and re-derives the
+    /// compatibility verdict from it. Passing nil clears both.
+    private func storeServerVersion(_ version: ServerVersion?) {
+        serverVersion = version
+        serverCompatibility = ServerCompatibility.evaluate(version)
+        let defaults = UserDefaults.standard
+        if let version {
+            defaults.set(version.description, forKey: Self.serverVersionKey)
+        } else {
+            defaults.removeObject(forKey: Self.serverVersionKey)
+        }
+    }
 
     private func establish(serverURL: String, token: String, tokenId: String?, user: AuthUser?) async {
         // A different server or account invalidates cached responses from the

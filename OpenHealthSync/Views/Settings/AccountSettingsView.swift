@@ -50,6 +50,21 @@ struct AccountSettingsView: View {
                             .truncationMode(.middle)
                     }
                 }
+                if let version = session.serverVersion {
+                    HStack {
+                        Text("Version")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("v\(version.description)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let note = session.serverCompatibility.message {
+                    Label(note, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(session.serverCompatibility.isSevere ? LB.amber : .secondary)
+                }
             }
 
             Section {
