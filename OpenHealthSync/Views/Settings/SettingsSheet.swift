@@ -12,6 +12,7 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var session: SessionStore
+    let healthMetricsSyncer: HealthMetricsSyncer
     let onReconnect: (_ baseURL: String, _ apiKey: String) async throws -> Void
     let onSignOut: () -> Void
     let onRemoveAllWorkouts: () async -> Void
@@ -36,7 +37,7 @@ struct SettingsSheet: View {
                     }
 
                     NavigationLink {
-                        SyncSettingsView(session: session)
+                        SyncSettingsView(session: session, healthMetricsSyncer: healthMetricsSyncer)
                     } label: {
                         PreferenceRow(
                             systemImage: "arrow.triangle.2.circlepath",

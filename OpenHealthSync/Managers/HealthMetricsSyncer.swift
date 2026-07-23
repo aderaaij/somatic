@@ -14,7 +14,19 @@ actor HealthMetricsSyncer {
     private let apiClient: WorkoutAPIClient
 
     private let lastSyncKey = "healthMetricsLastSyncDate"
+    private let sleepAnchorKey = "sleepSamplesAnchor"
+    private let backfillDoneKey = "healthHistoryBackfillDone"
     private let calendar = Calendar.current
+
+    /// How far the one-shot history backfill reaches. A year comfortably
+    /// covers the corrupted period and gives the server a real baseline.
+    private let backfillMonths = 12
+    /// Samples per POST, to keep request bodies modest on flaky mobile links.
+    private let uploadChunkSize = 2000
+
+    /// Actor reentrancy guard: observer bursts overlap `syncMetrics` calls at
+    /// its `await`s, and one in-flight sleep pass is always enough.
+    private var sleepSyncInFlight = false
 
     // MARK: - HealthKit Types
 
@@ -75,15 +87,29 @@ actor HealthMetricsSyncer {
     // MARK: - Sync
 
     func syncMetrics() async throws {
+        // Sleep ships as raw samples on its own anchored path; its errors are
+        // logged rather than thrown so a sleep hiccup can't starve the
+        // quantity metrics below, and vice versa.
+        do {
+            try await syncSleepSamples()
+        } catch {
+            AppLog.health.error("Sleep sample sync failed: \(String(describing: error), privacy: .public)")
+        }
+
         let now = Date()
         let startDate: Date
 
         if let lastSync = UserDefaults.standard.object(forKey: lastSyncKey) as? Date {
-            // Overlap by 1 day for upsert safety
-            startDate = calendar.date(byAdding: .day, value: -1, to: lastSync) ?? lastSync
+            // Overlap by 1 day for upsert safety. The window must open on a
+            // local midnight: these are whole-day totals and the server
+            // upsert overwrites whole fields, so a window edge landing
+            // mid-day truncates every re-sent day to its tail — the July
+            // sleep/steps corruption.
+            let overlapped = calendar.date(byAdding: .day, value: -1, to: lastSync) ?? lastSync
+            startDate = calendar.startOfDay(for: overlapped)
         } else {
             // First sync: last 7 days
-            startDate = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+            startDate = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -7, to: now) ?? now)
         }
 
         let metrics = try await fetchMetrics(from: startDate, to: now)
@@ -103,8 +129,9 @@ actor HealthMetricsSyncer {
         dateFormatter.dateFormat = "yyyy-MM-dd"
         dateFormatter.timeZone = calendar.timeZone
 
-        // Fetch all metric types concurrently
-        async let sleepData = fetchSleepByDay(from: startDate, to: endDate)
+        // Fetch all metric types concurrently. Sleep is absent by design:
+        // it goes to the server as raw samples (see syncSleepSamples), never
+        // as an app-computed daily total.
         async let restingHRData = fetchAverageByDay(.restingHeartRate, unit: .beatsPerMinute(), from: startDate, to: endDate)
         async let hrvData = fetchAverageByDay(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), from: startDate, to: endDate)
         async let weightData = fetchLatestByDay(.bodyMass, unit: .gramUnit(with: .kilo), from: startDate, to: endDate)
@@ -116,7 +143,6 @@ actor HealthMetricsSyncer {
         async let respRateData = fetchAverageByDay(.respiratoryRate, unit: .beatsPerMinute(), from: startDate, to: endDate)
         async let spo2Data = fetchAverageByDay(.oxygenSaturation, unit: .percent(), from: startDate, to: endDate)
 
-        let sleep = (try? await sleepData) ?? [:]
         let restingHR = (try? await restingHRData) ?? [:]
         let hrv = (try? await hrvData) ?? [:]
         let weight = (try? await weightData) ?? [:]
@@ -129,7 +155,7 @@ actor HealthMetricsSyncer {
         let spo2 = (try? await spo2Data) ?? [:]
 
         // Collect all dates that have any data
-        var allDates = Set<Date>(sleep.keys)
+        var allDates = Set<Date>()
         for dict in [restingHR, hrv, weight, vo2, steps, energy, bodyFat, leanMass, respRate, spo2] {
             allDates.formUnion(dict.keys)
         }
@@ -138,14 +164,13 @@ actor HealthMetricsSyncer {
             let dateString = dateFormatter.string(from: dayStart)
 
             // Skip days with no data at all
-            let hasSleep = sleep[dayStart] != nil
             let hasAnyMetric = restingHR[dayStart] != nil || hrv[dayStart] != nil ||
                 weight[dayStart] != nil || vo2[dayStart] != nil ||
                 steps[dayStart] != nil || energy[dayStart] != nil ||
                 bodyFat[dayStart] != nil || leanMass[dayStart] != nil ||
                 respRate[dayStart] != nil || spo2[dayStart] != nil
 
-            guard hasSleep || hasAnyMetric else { return nil }
+            guard hasAnyMetric else { return nil }
 
             // Convert body fat and SpO2 from 0-1 to 0-100
             let bodyFatPct = bodyFat[dayStart].map { $0 * 100 }
@@ -153,8 +178,6 @@ actor HealthMetricsSyncer {
 
             return DailyHealthMetrics(
                 date: dateString,
-                sleepDuration: sleep[dayStart]?.duration,
-                sleepStages: sleep[dayStart]?.stages,
                 restingHeartRate: restingHR[dayStart],
                 hrvSdnn: hrv[dayStart],
                 weight: weight[dayStart],
@@ -292,24 +315,100 @@ actor HealthMetricsSyncer {
         }
     }
 
-    // MARK: - Sleep Analysis
+    // MARK: - Sleep Samples (raw)
+    //
+    // Sleep is never aggregated on-device. Raw samples — every stage,
+    // including `unspecified` and `in_bed` — go to POST /api/health/sleep/samples;
+    // the server merges overlaps (sweep-line, one winner per slice) and
+    // attributes nights noon-to-noon, so merge logic can iterate without app
+    // releases.
 
-    private struct SleepDay {
-        var duration: Double = 0     // total non-awake seconds
-        var stages: SleepStages?
+    private func syncSleepSamples() async throws {
+        guard !sleepSyncInFlight else { return }
+        sleepSyncInFlight = true
+        defer { sleepSyncInFlight = false }
+
+        // One-shot history push, retried on every sync trigger until it lands.
+        // Idempotent server-side, so a half-finished attempt costs nothing.
+        if !UserDefaults.standard.bool(forKey: backfillDoneKey) {
+            try await backfillHealthHistory()
+        }
+
+        // The anchored query resumes from HealthKit's change log, so samples
+        // a watch delivers hours late still reach the server no matter which
+        // night they belong to. First run bounds the dump to recent nights;
+        // deep history arrives via the backfill above.
+        let anchor = storedSleepAnchor()
+        let predicate: NSPredicate? = anchor == nil
+            ? HKQuery.predicateForSamples(
+                withStart: calendar.date(byAdding: .day, value: -14, to: Date()),
+                end: nil
+            )
+            : nil
+
+        let (samples, anchorData) = try await fetchNewSleepSamples(predicate: predicate, anchor: anchor)
+        if !samples.isEmpty {
+            let result = try await uploadSleepSamples(samples)
+            AppLog.health.info("Sleep samples: sent \(samples.count), server stored \(result.stored) across \(result.daysUpdated) day(s)")
+        }
+        // Persist the anchor only after every chunk landed — a failed upload
+        // throws above, and the next sync re-reads from the old anchor (the
+        // server skips re-sent samples).
+        if let anchorData {
+            UserDefaults.standard.set(anchorData, forKey: sleepAnchorKey)
+        }
     }
 
-    private func fetchSleepByDay(
-        from startDate: Date,
-        to endDate: Date
-    ) async throws -> [Date: SleepDay] {
-        let sleepType = HKCategoryType(.sleepAnalysis)
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+    /// History repair, safe to run repeatedly: re-posts the last
+    /// `backfillMonths` of raw sleep samples (the server stores each once),
+    /// then recomputes the quantity metrics over the same window as whole-day
+    /// totals and lets the server overwrite — which heals the tail-of-day
+    /// truncated steps/energy values the old delta window left behind.
+    /// Settings exposes a manual trigger for re-runs.
+    @discardableResult
+    func backfillHealthHistory() async throws -> (stored: Int, daysUpdated: Int) {
+        let end = Date()
+        let start = calendar.startOfDay(
+            for: calendar.date(byAdding: .month, value: -backfillMonths, to: end) ?? end
+        )
+
+        let samples = try await fetchSleepSampleHistory(from: start, to: end)
+        let result = try await uploadSleepSamples(samples)
+
+        let metrics = try await fetchMetrics(from: start, to: end)
+        if !metrics.isEmpty {
+            try await apiClient.sendHealthMetrics(HealthMetricsBulkPayload(metrics: metrics))
+        }
+
+        UserDefaults.standard.set(true, forKey: backfillDoneKey)
+        AppLog.health.info("History backfill: sent \(samples.count) sleep samples (server stored \(result.stored) across \(result.daysUpdated) day(s)) and \(metrics.count) days of metrics")
+        return result
+    }
+
+    private func uploadSleepSamples(_ samples: [SleepSamplePayload]) async throws -> (stored: Int, daysUpdated: Int) {
+        var stored = 0
+        var daysUpdated = 0
+        let timezone = TimeZone.current.identifier
+        var index = 0
+        while index < samples.count {
+            let chunk = Array(samples[index ..< min(index + uploadChunkSize, samples.count)])
+            let response = try await apiClient.sendSleepSamples(
+                SleepSamplesUploadPayload(timezone: timezone, samples: chunk)
+            )
+            stored += response.stored
+            daysUpdated += response.daysUpdated
+            index += uploadChunkSize
+        }
+        return (stored, daysUpdated)
+    }
+
+    private func fetchSleepSampleHistory(from startDate: Date, to endDate: Date) async throws -> [SleepSamplePayload] {
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
 
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(
-                sampleType: sleepType,
+                sampleType: HKCategoryType(.sleepAnalysis),
                 predicate: predicate,
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: [sortDescriptor]
@@ -318,53 +417,65 @@ actor HealthMetricsSyncer {
                     continuation.resume(throwing: error)
                     return
                 }
-
-                var dayData: [Date: (awake: Double, rem: Double, core: Double, deep: Double)] = [:]
-
-                for sample in (samples as? [HKCategorySample]) ?? [] {
-                    let duration = sample.endDate.timeIntervalSince(sample.startDate)
-                    // Attribute sleep to the day the sleep session started
-                    let dayStart = self.calendar.startOfDay(for: sample.startDate)
-
-                    var entry = dayData[dayStart] ?? (0, 0, 0, 0)
-
-                    switch sample.value {
-                    case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
-                        entry.rem += duration
-                    case HKCategoryValueSleepAnalysis.asleepCore.rawValue:
-                        entry.core += duration
-                    case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
-                        entry.deep += duration
-                    case HKCategoryValueSleepAnalysis.awake.rawValue:
-                        entry.awake += duration
-                    case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
-                        // Older data without stage breakdown — count as core
-                        entry.core += duration
-                    default:
-                        break
-                    }
-
-                    dayData[dayStart] = entry
-                }
-
-                var result: [Date: SleepDay] = [:]
-                for (day, stages) in dayData {
-                    let totalSleep = stages.rem + stages.core + stages.deep
-                    result[day] = SleepDay(
-                        duration: totalSleep,
-                        stages: SleepStages(
-                            awake: stages.awake > 0 ? stages.awake : nil,
-                            rem: stages.rem > 0 ? stages.rem : nil,
-                            core: stages.core > 0 ? stages.core : nil,
-                            deep: stages.deep > 0 ? stages.deep : nil
-                        )
-                    )
-                }
-                continuation.resume(returning: result)
+                let payloads = ((samples as? [HKCategorySample]) ?? []).compactMap(Self.sleepPayload)
+                continuation.resume(returning: payloads)
             }
 
             healthStore.execute(query)
         }
+    }
+
+    /// Returns new-since-anchor samples plus the fresh anchor, already
+    /// serialized: `Data` is what gets persisted, and it crosses back into
+    /// the actor without `Sendable` friction.
+    private func fetchNewSleepSamples(
+        predicate: NSPredicate?,
+        anchor: HKQueryAnchor?
+    ) async throws -> (samples: [SleepSamplePayload], anchorData: Data?) {
+        try await withCheckedThrowingContinuation { continuation in
+            let query = HKAnchoredObjectQuery(
+                type: HKCategoryType(.sleepAnalysis),
+                predicate: predicate,
+                anchor: anchor,
+                limit: HKObjectQueryNoLimit
+            ) { _, samples, _, newAnchor, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                let payloads = ((samples as? [HKCategorySample]) ?? []).compactMap(Self.sleepPayload)
+                let anchorData = newAnchor.flatMap {
+                    try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true)
+                }
+                continuation.resume(returning: (payloads, anchorData))
+            }
+
+            healthStore.execute(query)
+        }
+    }
+
+    private func storedSleepAnchor() -> HKQueryAnchor? {
+        guard let data = UserDefaults.standard.data(forKey: sleepAnchorKey) else { return nil }
+        return try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
+    }
+
+    private nonisolated static func sleepPayload(from sample: HKCategorySample) -> SleepSamplePayload? {
+        let stage: String
+        switch sample.value {
+        case HKCategoryValueSleepAnalysis.asleepREM.rawValue: stage = "rem"
+        case HKCategoryValueSleepAnalysis.asleepCore.rawValue: stage = "core"
+        case HKCategoryValueSleepAnalysis.asleepDeep.rawValue: stage = "deep"
+        case HKCategoryValueSleepAnalysis.awake.rawValue: stage = "awake"
+        case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue: stage = "unspecified"
+        case HKCategoryValueSleepAnalysis.inBed.rawValue: stage = "in_bed"
+        default: return nil
+        }
+        return SleepSamplePayload(
+            start: sample.startDate,
+            end: sample.endDate,
+            stage: stage,
+            source: sample.sourceRevision.source.bundleIdentifier
+        )
     }
 }
 

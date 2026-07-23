@@ -94,6 +94,7 @@ struct LoopbackApp: App {
                 scheduleManager: scheduleManager,
                 missedWorkoutDetector: missedWorkoutDetector,
                 session: session,
+                healthMetricsSyncer: healthMetricsSyncer,
                 onReconnect: { baseURL, token in
                     // Advanced: swap in a manually pasted token, then refresh.
                     try await session.applyManualToken(serverURL: baseURL, token: token)

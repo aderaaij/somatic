@@ -444,6 +444,15 @@ actor WorkoutAPIClient {
         try await perform("POST", "api/health/metrics", body: Self.encoder.encode(payload))
     }
 
+    /// Ships raw sleep samples. The server dedupes (`ON CONFLICT DO NOTHING`)
+    /// and re-derives the affected nights' rollups, so re-sending the same
+    /// samples is always safe.
+    @discardableResult
+    func sendSleepSamples(_ payload: SleepSamplesUploadPayload) async throws -> SleepSamplesUploadResponse {
+        let (data, _) = try await perform("POST", "api/health/sleep/samples", body: Self.encoder.encode(payload))
+        return try Self.decoder.decode(SleepSamplesUploadResponse.self, from: data)
+    }
+
     // MARK: - Plan Notes (coach memory)
 
     /// Fetches existing notes for a conversation (used to dedupe onboarding

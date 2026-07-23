@@ -5,6 +5,7 @@ struct MainTabView: View {
     var scheduleManager: WorkoutScheduleManager
     var missedWorkoutDetector: MissedWorkoutDetector
     var session: SessionStore
+    let healthMetricsSyncer: HealthMetricsSyncer
     let onReconnect: (String, String) async throws -> Void
 
     @State private var showingSettings = false
@@ -49,6 +50,7 @@ struct MainTabView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsSheet(
                 session: session,
+                healthMetricsSyncer: healthMetricsSyncer,
                 onReconnect: onReconnect,
                 onSignOut: {
                     Task { await session.signOut() }

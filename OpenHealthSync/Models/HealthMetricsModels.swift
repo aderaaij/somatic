@@ -9,10 +9,11 @@ import Foundation
 
 // MARK: - Daily Health Metrics
 
+// Sleep is deliberately absent here: it ships as raw samples (below), never
+// as app-computed daily totals — the server owns night attribution and stage
+// merging, and ignores legacy sleep fields once it holds samples.
 struct DailyHealthMetrics: Codable, Sendable {
     let date: String                        // "2026-04-04" (ISO date, no time)
-    let sleepDuration: Double?              // seconds
-    let sleepStages: SleepStages?
     let restingHeartRate: Double?           // bpm
     let hrvSdnn: Double?                    // ms
     let weight: Double?                     // kg
@@ -26,8 +27,6 @@ struct DailyHealthMetrics: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case date
-        case sleepDuration = "sleep_duration"
-        case sleepStages = "sleep_stages"
         case restingHeartRate = "resting_heart_rate"
         case hrvSdnn = "hrv_sdnn"
         case weight
@@ -41,13 +40,29 @@ struct DailyHealthMetrics: Codable, Sendable {
     }
 }
 
-// MARK: - Sleep Stages
+// MARK: - Raw Sleep Samples
 
-struct SleepStages: Codable, Sendable {
-    let awake: Double?                      // seconds
-    let rem: Double?                        // seconds
-    let core: Double?                       // seconds (light sleep)
-    let deep: Double?                       // seconds
+// Marked `nonisolated` like the bulk payload below, for the same reason.
+nonisolated struct SleepSamplePayload: Codable, Sendable {
+    let start: Date
+    let end: Date
+    let stage: String                       // rem | core | deep | awake | unspecified | in_bed
+    let source: String                      // HealthKit writer's bundle identifier
+}
+
+nonisolated struct SleepSamplesUploadPayload: Codable, Sendable {
+    let timezone: String                    // IANA identifier, e.g. Europe/Amsterdam
+    let samples: [SleepSamplePayload]
+}
+
+nonisolated struct SleepSamplesUploadResponse: Codable, Sendable {
+    let stored: Int
+    let daysUpdated: Int
+
+    enum CodingKeys: String, CodingKey {
+        case stored
+        case daysUpdated = "days_updated"
+    }
 }
 
 // MARK: - Bulk Payload
